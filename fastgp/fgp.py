@@ -1,7 +1,7 @@
 import torch 
 import qmcpy as qp
 import numpy as np 
-import scipy.special 
+import scipy.stats 
 
 class _FastGP(torch.nn.Module):
     def __init__(self,
@@ -56,14 +56,18 @@ class _FastGP(torch.nn.Module):
         self.ft = ft 
         self.ift = ift
         self.save_y = save_y
-    def _finish_init(self):
+        self.x,self._x = self._sample(self.n_min,self.n_max)
         self.k1full = self._kernel_parts(self._x,self._x[None,0,:])
         y = self.f(self.x)
-        assert y.size(-1)==(self.n_max-self.n_min)
-        self.d_out = y.numel()/(self.n_max-self.n_min)
+        assert y.size(-1)==self.n_max
+        self.d_out = y.numel()/self.n_max
         self.ytilde = self.ft(y)
         if self.save_y: 
             self.y = y
+        k1 = self._kernel_from_parts(self.k1full)
+        k1[0] += self.noise
+        self.lam = np.sqrt(self.n_max)*self.ft(k1)
+        self.coeffs = self.ift(self.ytilde/self.lam).real
     @property
     def global_scale(self):
         return self.tf_global_scale(self.raw_global_scale)
@@ -79,24 +83,73 @@ class _FastGP(torch.nn.Module):
             optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
         for i in range(steps+1):
-            optimizer.zero_grad()
-            k1 = self._kernel_from_parts(self.k1full)
-            k1[0] += self.noise
-            self.lam = np.sqrt(self.n_max)*self.ft(k1)
-            self.coeffs = self.ift(self.ytilde/self.lam)
             mll = (self.ytilde*self.lam*self.ytilde).real.sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+self.d_out*self.n_max*np.log(2*np.pi)
             print(mll)
             if i==steps: break
             mll.backward()
             optimizer.step()
-    def _kernel_parts(self, x_or_xb, z_or_zb):
-        return self._kernel_parts_from_delta(self._ominus(x_or_xb,z_or_zb))
+            optimizer.zero_grad()
+            k1 = self._kernel_from_parts(self.k1full)
+            k1[0] += self.noise
+            self.lam = np.sqrt(self.n_max)*self.ft(k1)
+        self.coeffs = self.ift(self.ytilde/self.lam).real
+    def _kernel_parts(self, x, z):
+        return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
-        return self.global_scale*(1+self.lengthscales*parts).prod(1)
+        return self.global_scale*(1+self.lengthscales*parts).prod(-1)
     def _kernel_from_delta(self, delta):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
-    def kernel(x_or_xb, z_or_zb):
-        return self._kernel_from_parts(_kernel_parts(x_or_xb,z_or_zb))
+    def kernel(self, x, z):
+        return self._kernel_from_parts(self._kernel_parts(x,z))
+    def post_mean_grad(self, x):
+        assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
+        k = self.kernel(x[:,None,:],self._x[None,:,:])
+        return torch.einsum("il,...l->...i",k,self.coeffs)
+    def post_mean(self, x):
+        with torch.no_grad():
+            return self.post_mean_grad(x)
+    def post_cov_grad(self, x, z):
+        assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
+        assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
+        equal = torch.equal(x,z)
+        k = self.kernel(x[:,None,:],z[None,:,:])
+        k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
+        k2t = k1t if equal else self.ft(self.kernel(z[:,None,:],self._x[None,:,:])) 
+        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/self.lam).real
+        if equal:
+            nrange = torch.arange(x.size(0),device=x.device)
+            diag = kmat[nrange,nrange]
+            diag[diag<0] = 0 
+            kmat[nrange,nrange] = diag 
+        return kmat
+    def post_cov(self, x, z):
+        with torch.no_grad():
+            return self.post_cov_grad(x,z)
+    def post_var_grad(self, x):
+        assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
+        k = self.kernel(x,x)
+        k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
+        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self.lam).real
+        diag[diag<0] = 0 
+        return diag        
+    def post_var(self, x):
+        with torch.no_grad():
+            return self.post_var_grad(x)
+    def post_std_grad(self, x):
+        return torch.sqrt(self.post_var_grad(x))
+    def post_std(self, x):
+        return torch.sqrt(self.post_var(x))
+    def post_ci_grad(self, x, confidence=0.99):
+        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
+        pmean = self.post_mean_grad(x) 
+        pstd = self.post_std_grad(x)
+        ci_low = pmean-q*pstd 
+        ci_high = pmean+q*pstd 
+        return pmean,pstd,q,ci_low,ci_high
+    def post_ci(self, x, confidence=0.99):
+        with torch.no_grad():
+            return self.post_ci_grad(x)
 
 class FastGPRLattice(_FastGP):
     def __init__(self,
@@ -106,9 +159,9 @@ class FastGPRLattice(_FastGP):
             alpha:int = 3,
             global_scale:float = 1., 
             lengthscales:torch.Tensor = 1., 
-            noise:float = 1e-8, 
+            noise:float = 1e-16, 
             device:torch.device = "cpu",
-            save_y = False,
+            save_y = True,
             tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -121,6 +174,7 @@ class FastGPRLattice(_FastGP):
         assert isinstance(lattice,qp.Lattice) and lattice.order=="NATURAL" and lattice.replications==1, "lattice should be a qp.Lattice instance with order='NATURAL' and replications=1"
         ft = torch.compile(qp.fftbr_torch) if compile_fts else qp.fftbr_torch
         ift = torch.compile(qp.ifftbr_torch) if compile_fts else qp.ifftbr_torch
+        self.__const_for_kernel = None
         super().__init__(
             f,
             lattice,
@@ -139,13 +193,18 @@ class FastGPRLattice(_FastGP):
             ft,
             ift,
         )
-        self.const = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
-        self.x = self._x = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max)).to(torch.get_default_dtype()).to(self.device)
-        super()._finish_init()
+    def _sample(self, n_min, n_max):
+        x = torch.from_numpy(self.dd_obj.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
+        return x,x
+    @property
+    def const_for_kernel(self):
+        if self.__const_for_kernel is None:
+            self.__const_for_kernel = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
+        return self.__const_for_kernel
     def _ominus(self, x, z):
         return (x-z)%1
     def _kernel_parts_from_delta(self, delta):
-        return self.const*torch.vstack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[:,j]) for j in range(self.d)]).T
+        return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
 
 class FastGPRDigitalNetB2(_FastGP):
     def __init__(self,
@@ -155,9 +214,9 @@ class FastGPRDigitalNetB2(_FastGP):
             alpha:int = 3,
             global_scale:float = 1., 
             lengthscales:torch.Tensor = 1., 
-            noise:float = 1e-8, 
+            noise:float = 1e-16, 
             device:torch.device = "cpu",
-            save_y = False,
+            save_y = True,
             tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -188,10 +247,10 @@ class FastGPRDigitalNetB2(_FastGP):
             ft,
             ift,
         )
-        self.const = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
-        self._x = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max,return_binary=True).astype(np.int64)).to(self.device)
-        self.x = self._convert_from_b(self._x)
-        super()._finish_init()
+    def _sample(self, n_min, n_max):
+        _x = torch.from_numpy(self.dd_obj.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
+        x = self._convert_from_b(_x)
+        return x,_x
     def _convert_to_b(self, x):
         return torch.floor(x*2**(self.t)).to(torch.int64)
     def _convert_from_b(self, xb):
@@ -208,4 +267,4 @@ class FastGPRDigitalNetB2(_FastGP):
         else: # fp_x and fp_z 
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
     def _kernel_parts_from_delta(self, delta):
-        return torch.vstack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[:,j],self.t)-1 for j in range(self.d)]).T
+        return torch.stack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
