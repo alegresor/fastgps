@@ -9,15 +9,15 @@ class _FastGP(torch.nn.Module):
         dd_obj,
         n,
         alpha,
-        global_scale,
+        scale,
         lengthscales,
         noise,
         device,
         save_y,
-        tfs_global_scale,
+        tfs_scale,
         tfs_lengthscales,
         tfs_noise,
-        requires_grad_global_scale, 
+        requires_grad_scale, 
         requires_grad_lengthscales, 
         requires_grad_noise, 
         ft,
@@ -37,11 +37,11 @@ class _FastGP(torch.nn.Module):
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
         self.alpha = alpha
-        assert np.isscalar(global_scale) and global_scale>0, "global_scale should be a positive float"
-        global_scale = torch.tensor(global_scale,device=self.device)
-        assert len(tfs_global_scale)==2 and callable(tfs_global_scale[0]) and callable(tfs_global_scale[1]), "tfs_global_scale should be a tuple of two callables, the transform and inverse transform"
-        self.tf_global_scale = tfs_global_scale[1]
-        self.raw_global_scale = torch.nn.Parameter(tfs_global_scale[0](global_scale),requires_grad=requires_grad_global_scale)
+        assert np.isscalar(scale) and scale>0, "scale should be a positive float"
+        scale = torch.tensor(scale,device=self.device)
+        assert len(tfs_scale)==2 and callable(tfs_scale[0]) and callable(tfs_scale[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
+        self.tf_scale = tfs_scale[1]
+        self.raw_scale = torch.nn.Parameter(tfs_scale[0](scale),requires_grad=requires_grad_scale)
         assert (np.isscalar(lengthscales) and lengthscales>0) or (isinstance(lengthscales,torch.Tensor) and lengthscales.shape==(self,d) and (lengthscales>0).all()), "lengthscales should be a float or torch.Tensor of length d and must be postivie"
         if np.isscalar(lengthscales): 
             lengthscales = lengthscales*torch.ones(self.d,device=self.device)
@@ -50,7 +50,7 @@ class _FastGP(torch.nn.Module):
         self.raw_lengthscales = torch.nn.Parameter(tfs_lengthscales[0](lengthscales),requires_grad=requires_grad_lengthscales)
         assert np.isscalar(noise) and noise>0, "noise should be a positive float"
         noise = torch.tensor(noise,device=self.device)
-        assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_global_scale should be a tuple of two callables, the transform and inverse transform"
+        assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
         self.ft = ft 
@@ -69,8 +69,8 @@ class _FastGP(torch.nn.Module):
         self.lam = np.sqrt(self.n_max)*self.ft(k1)
         self.coeffs = self.ift(self.ytilde/self.lam).real
     @property
-    def global_scale(self):
-        return self.tf_global_scale(self.raw_global_scale)
+    def scale(self):
+        return self.tf_scale(self.raw_scale)
     @property
     def lengthscales(self):
         return self.tf_lengthscales(self.raw_lengthscales)
@@ -80,7 +80,7 @@ class _FastGP(torch.nn.Module):
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
-        return self.global_scale*(1+self.lengthscales*parts).prod(-1)
+        return self.scale*(1+self.lengthscales*parts).prod(-1)
     def _kernel_from_delta(self, delta):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def kernel(self, x, z):
@@ -134,15 +134,52 @@ class _FastGP(torch.nn.Module):
     def post_ci(self, x, confidence=0.99):
         with torch.no_grad():
             return self.post_ci_grad(x)
-    def fit(self, steps:int=10, optimizer:torch.optim.Optimizer=None, lr:float=1e-1):
+    def fit(self,
+        steps:int = 10,
+        optimizer:torch.optim.Optimizer = None,
+        lr:float = 1e-1,
+        store_mll_hist:bool = True, 
+        store_scale_hist:bool = True, 
+        store_lengthscales_hist:bool = True,
+        store_noise_hist:bool = True,
+        verbose:int = 1,
+        verbose_indent:int = 4,
+    ):
         assert isinstance(steps,int)
         if optimizer is None: 
             optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
         mll_const = self.d_out*self.n_max*np.log(2*np.pi)
+        if store_mll_hist:
+            mll_hist = torch.empty(steps+1)
+        store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
+        store_lengthscales_hist = store_lengthscales_hist and self.raw_lengthscales.requires_grad
+        store_noise_hist = store_noise_hist and self.raw_noise.requires_grad
+        if store_scale_hist:
+            scale_hist = torch.empty(steps+1)
+        if store_lengthscales_hist:
+            lengthscales_hist = torch.empty((steps+1,self.d))
+        if store_noise_hist:
+            noise_hist = torch.empty(steps+1)
+        if verbose:
+            _s = "%16s | %-8s | %-8s | %-8s | %-s"%("step of %.1e"%steps,"NMLL","noise","scale","lengthscales")
+            print(" "*verbose_indent+_s)
+            print(" "*verbose_indent+"~"*len(_s))
         for i in range(steps+1):
             mll = (torch.abs(self.ytilde)**2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
-            print(mll)
+            if store_mll_hist:
+                mll_hist[i] = mll.detach().to(mll_hist.device)
+            if store_scale_hist:
+                scale_hist[i] = self.scale.detach().to(scale_hist.device)
+            if store_lengthscales_hist:
+                lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
+            if store_noise_hist:
+                noise_hist[i] = self.noise.detach().to(noise_hist.device())
+            if verbose and (i%verbose==0 or i==steps):
+                with np.printoptions(formatter={"float":lambda x: "%.1e"%x},threshold=8,edgeitems=4):
+                    _s = "%16.2e | %-8.1e | %-8.1e | %-8.1e | %-s"%\
+                        (i,mll.detach().cpu(),self.noise.detach().cpu(),self.scale.detach().cpu(),str(self.lengthscales.detach().cpu().numpy()))
+                print(" "*verbose_indent+_s)
             if i==steps: break
             mll.backward()
             optimizer.step()
@@ -187,15 +224,15 @@ class FastGPRLattice(_FastGP):
             lattice:qp.Lattice = qp.Lattice(2,seed=7),
             n:int = 2**16,
             alpha:int = 2,
-            global_scale:float = 1., 
+            scale:float = 1., 
             lengthscales:torch.Tensor = 1e4, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
-            tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            requires_grad_global_scale = True, 
+            requires_grad_scale = True, 
             requires_grad_lengthscales = True, 
             requires_grad_noise = False, 
             compile_fts:bool = False,
@@ -210,14 +247,14 @@ class FastGPRLattice(_FastGP):
             lattice,
             n,
             alpha,
-            global_scale,
+            scale,
             lengthscales,
             noise,device,
             save_y,
-            tfs_global_scale,
+            tfs_scale,
             tfs_lengthscales,
             tfs_noise,
-            requires_grad_global_scale,
+            requires_grad_scale,
             requires_grad_lengthscales,
             requires_grad_noise,
             ft,
@@ -244,15 +281,15 @@ class FastGPRDigitalNetB2(_FastGP):
             dnb2:qp.DigitalNetB2 = qp.DigitalNetB2(2,seed=7),
             n:int = 2**16,
             alpha:int = 2,
-            global_scale:float = 1., 
+            scale:float = 1., 
             lengthscales:torch.Tensor = 5e2, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
-            tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            requires_grad_global_scale = True, 
+            requires_grad_scale = True, 
             requires_grad_lengthscales = True, 
             requires_grad_noise = False, 
             compile_fts:bool = False,
@@ -266,14 +303,14 @@ class FastGPRDigitalNetB2(_FastGP):
             dnb2,
             n,
             alpha,
-            global_scale,
+            scale,
             lengthscales,
             noise,device,
             save_y,
-            tfs_global_scale,
+            tfs_scale,
             tfs_lengthscales,
             tfs_noise,
-            requires_grad_global_scale,
+            requires_grad_scale,
             requires_grad_lengthscales,
             requires_grad_noise,
             ft,
