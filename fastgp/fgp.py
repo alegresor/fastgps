@@ -13,7 +13,6 @@ class _FastGP(torch.nn.Module):
         lengthscales,
         noise,
         device,
-        save_x,
         save_y,
         tfs_global_scale,
         tfs_lengthscales,
@@ -56,18 +55,15 @@ class _FastGP(torch.nn.Module):
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
         self.ft = ft 
         self.ift = ift
-        self.save_x = save_x 
         self.save_y = save_y
     def _finish_init(self):
-        x,y,k1full = self._setup()
+        self.k1full = self._kernel_parts(self._x,self._x[None,0,:])
+        y = self.f(self.x)
         assert y.size(-1)==(self.n_max-self.n_min)
-        self.k1full = k1full
+        self.d_out = y.numel()/(self.n_max-self.n_min)
         self.ytilde = self.ft(y)
-        if self.save_x:
-            self.x = x
         if self.save_y: 
             self.y = y
-        self.d_out = y[...,-1].numel()
     @property
     def global_scale(self):
         return self.tf_global_scale(self.raw_global_scale)
@@ -84,15 +80,23 @@ class _FastGP(torch.nn.Module):
         assert isinstance(optimizer,torch.optim.Optimizer)
         for i in range(steps+1):
             optimizer.zero_grad()
-            k1 = self.global_scale*(1+self.lengthscales*self.k1full).prod(1)
+            k1 = self._kernel_from_parts(self.k1full)
             k1[0] += self.noise
             self.lam = np.sqrt(self.n_max)*self.ft(k1)
             self.coeffs = self.ift(self.ytilde/self.lam)
-            mll = (self.ytilde*self.lam*self.ytilde).real.sum()-self.d_out*torch.log(torch.abs(self.lam)).sum()-self.d_out*self.n_max*np.log(2*np.pi)
+            mll = (self.ytilde*self.lam*self.ytilde).real.sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+self.d_out*self.n_max*np.log(2*np.pi)
             print(mll)
             if i==steps: break
             mll.backward()
             optimizer.step()
+    def _kernel_parts(self, x_or_xb, z_or_zb):
+        return self._kernel_parts_from_delta(self._ominus(x_or_xb,z_or_zb))
+    def _kernel_from_parts(self, parts):
+        return self.global_scale*(1+self.lengthscales*parts).prod(1)
+    def _kernel_from_delta(self, delta):
+        return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
+    def kernel(x_or_xb, z_or_zb):
+        return self._kernel_from_parts(_kernel_parts(x_or_xb,z_or_zb))
 
 class FastGPRLattice(_FastGP):
     def __init__(self,
@@ -104,7 +108,6 @@ class FastGPRLattice(_FastGP):
             lengthscales:torch.Tensor = 1., 
             noise:float = 1e-8, 
             device:torch.device = "cpu",
-            save_x = False,
             save_y = False,
             tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -126,7 +129,6 @@ class FastGPRLattice(_FastGP):
             global_scale,
             lengthscales,
             noise,device,
-            save_x,
             save_y,
             tfs_global_scale,
             tfs_lengthscales,
@@ -138,13 +140,12 @@ class FastGPRLattice(_FastGP):
             ift,
         )
         self.const = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
+        self.x = self._x = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max)).to(torch.get_default_dtype()).to(self.device)
         super()._finish_init()
-    def _setup(self):
-        x = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max)).to(torch.get_default_dtype()).to(self.device)
-        y = self.f(x)
-        delta = (x-x[0])%1
-        k1full = self.const*torch.vstack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[:,j]) for j in range(self.d)]).T
-        return x,y,k1full
+    def _ominus(self, x, z):
+        return (x-z)%1
+    def _kernel_parts_from_delta(self, delta):
+        return self.const*torch.vstack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[:,j]) for j in range(self.d)]).T
 
 class FastGPRDigitalNetB2(_FastGP):
     def __init__(self,
@@ -156,7 +157,6 @@ class FastGPRDigitalNetB2(_FastGP):
             lengthscales:torch.Tensor = 1., 
             noise:float = 1e-8, 
             device:torch.device = "cpu",
-            save_x = False,
             save_y = False,
             tfs_global_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -178,7 +178,6 @@ class FastGPRDigitalNetB2(_FastGP):
             global_scale,
             lengthscales,
             noise,device,
-            save_x,
             save_y,
             tfs_global_scale,
             tfs_lengthscales,
@@ -190,11 +189,23 @@ class FastGPRDigitalNetB2(_FastGP):
             ift,
         )
         self.const = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
+        self._x = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max,return_binary=True).astype(np.int64)).to(self.device)
+        self.x = self._convert_from_b(self._x)
         super()._finish_init()
-    def _setup(self):
-        xb = torch.from_numpy(self.dd_obj.gen_samples(n_min=self.n_min,n_max=self.n_max,return_binary=True).astype(np.int64)).to(self.device)
-        x = xb*2**(-self.t)
-        y = self.f(x)
-        delta = xb^xb[0]
-        k1full = torch.vstack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[:,j],self.t) for j in range(self.d)]).T
-        return x,y,k1full
+    def _convert_to_b(self, x):
+        return torch.floor(x*2**(self.t)).to(torch.int64)
+    def _convert_from_b(self, xb):
+        return xb*2**(-self.t)
+    def _ominus(self, x_or_xb, z_or_zb):
+        fp_x = torch.is_floating_point(x_or_xb)
+        fp_z = torch.is_floating_point(z_or_zb)
+        if (not fp_x) and (not fp_z):
+            return x_or_xb^z_or_zb
+        elif (not fp_x) and fp_z:
+            return x_or_xb^self._convert_to_b(z_or_zb)
+        elif fp_x and (not fp_x):
+            return self._convert_to_b(x_or_xb)^z_or_xb
+        else: # fp_x and fp_z 
+            return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
+    def _kernel_parts_from_delta(self, delta):
+        return torch.vstack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[:,j],self.t)-1 for j in range(self.d)]).T
