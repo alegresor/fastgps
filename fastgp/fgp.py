@@ -135,21 +135,31 @@ class _FastGP(torch.nn.Module):
         with torch.no_grad():
             return self.post_ci_grad(x)
     def fit(self,
-        steps:int = 10,
+        steps:int = 5000,
         optimizer:torch.optim.Optimizer = None,
         lr:float = 1e-1,
         store_mll_hist:bool = True, 
         store_scale_hist:bool = True, 
         store_lengthscales_hist:bool = True,
         store_noise_hist:bool = True,
-        verbose:int = 1,
+        verbose:int = 5,
         verbose_indent:int = 4,
+        stop_crit_improvement_threshold:float = 1e-5,
+        stop_crit_wait_steps:int = 10,
     ):
-        assert isinstance(steps,int)
-        if optimizer is None: 
+        assert isinstance(steps,int) and steps>=0
+        if optimizer is None:
+            assert np.isscalar(lr) and lr>0, "require lr is a positive float"
             optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
-        mll_const = self.d_out*self.n_max*np.log(2*np.pi)
+        assert isinstance(store_mll_hist,bool), "require bool store_mll_hist" 
+        assert isinstance(store_scale_hist,bool), "require bool store_scale_hist" 
+        assert isinstance(store_lengthscales_hist,bool), "require bool store_lengthscales_hist" 
+        assert isinstance(store_noise_hist,bool), "require bool store_noise_hist"
+        assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
+        assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
+        assert isinstance(stop_crit_improvement_threshold,float) and 0<=stop_crit_improvement_threshold<1, "require stop_crit_improvement_threshold is a float in [0,1)"
+        assert isinstance(stop_crit_wait_steps,int) and stop_crit_wait_steps>0
         if store_mll_hist:
             mll_hist = torch.empty(steps+1)
         store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
@@ -162,25 +172,37 @@ class _FastGP(torch.nn.Module):
         if store_noise_hist:
             noise_hist = torch.empty(steps+1)
         if verbose:
-            _s = "%16s | %-8s | %-8s | %-8s | %-s"%("step of %.1e"%steps,"NMLL","noise","scale","lengthscales")
+            _s = "%16s | %-10s | %-10s | %-10s | %-s"%("step of %.1e"%steps,"NMLL","noise","scale","lengthscales")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
+        mll_const = self.d_out*self.n_max*np.log(2*np.pi)
+        stop_crit_best_mll = torch.inf 
+        stop_crit_save_mll = torch.inf 
+        stop_crit_steps_without_improvement_mll = 0
         for i in range(steps+1):
             mll = (torch.abs(self.ytilde)**2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
+            if mll.item()<stop_crit_best_mll:
+                stop_crit_best_mll = mll.item()
+            if mll.item()<stop_crit_save_mll*(1-stop_crit_improvement_threshold):
+                stop_crit_steps_without_improvement_mll = 0
+                stop_crit_save_mll = stop_crit_best_mll
+            else:
+                stop_crit_steps_without_improvement_mll += 1
+            break_condition = i==steps or stop_crit_steps_without_improvement_mll==stop_crit_wait_steps
             if store_mll_hist:
-                mll_hist[i] = mll.detach().to(mll_hist.device)
+                mll_hist[i] = mll.item()
             if store_scale_hist:
-                scale_hist[i] = self.scale.detach().to(scale_hist.device)
+                scale_hist[i] = self.scale.item()
             if store_lengthscales_hist:
                 lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
             if store_noise_hist:
-                noise_hist[i] = self.noise.detach().to(noise_hist.device())
-            if verbose and (i%verbose==0 or i==steps):
-                with np.printoptions(formatter={"float":lambda x: "%.1e"%x},threshold=8,edgeitems=4):
-                    _s = "%16.2e | %-8.1e | %-8.1e | %-8.1e | %-s"%\
-                        (i,mll.detach().cpu(),self.noise.detach().cpu(),self.scale.detach().cpu(),str(self.lengthscales.detach().cpu().numpy()))
+                noise_hist[i] = self.noise.item()
+            if verbose and (i%verbose==0 or break_condition):
+                with np.printoptions(formatter={"float":lambda x: "%.2e"%x},threshold=6,edgeitems=3):
+                    _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-s"%\
+                        (i,mll.item(),self.noise.item(),self.scale.item(),str(self.lengthscales.detach().cpu().numpy()))
                 print(" "*verbose_indent+_s)
-            if i==steps: break
+            if break_condition: break
             mll.backward()
             optimizer.step()
             optimizer.zero_grad()
