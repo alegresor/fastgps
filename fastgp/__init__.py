@@ -1,1 +1,1 @@
-from .fgp import FastGPRLattice
+from .fgp import FastGPRLattice,FastGPRDigitalNetB2
