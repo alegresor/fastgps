@@ -73,24 +73,24 @@ class _FastGP(torch.nn.Module):
             self.y = y
         if self.save_k1:
             self.k1 = k1
-    def double_n(self, _check:bool=True):
+    def double_n(self, _check:bool=False):
         self.n_min = self.n_max 
         self.n_max = 2*self.n_max
         x_new,_x_new = self._sample(self.n_min,self.n_max)
         ynew = self.f(x_new)
         ytilde_new = self.ft(ynew)
-        omega = self._omega(self.n_min)
         assert list(ynew.shape)==self.y_shape
         k1full_new = self._kernel_parts(_x_new,self._x[None,0,:])
         k1_new = self._kernel_from_parts(k1full_new)
         lam_new = np.sqrt(self.n_min)*self.ft(k1_new)
-        gamma = self.lam**2-omega**2*lam_new**2
+        omega_ytilde_new = self.omega*ytilde_new
         self.ytilde = 1/np.sqrt(2)*torch.hstack([
-            self.ytilde+omega*ytilde_new,
-            self.ytilde-omega*ytilde_new])
+            self.ytilde+omega_ytilde_new,
+            self.ytilde-omega_ytilde_new])
+        omega_lam_new = self.omega*lam_new
         self.lam = torch.hstack([
-            self.lam+omega*lam_new,
-            self.lam-omega*lam_new])
+            self.lam+omega_lam_new,
+            self.lam-omega_lam_new])
         self.y_shape[-1] *= 2
         if self.save_y:
             self.y = torch.cat([self.y,ynew],-1)
@@ -104,6 +104,7 @@ class _FastGP(torch.nn.Module):
             lam_ref = np.sqrt(self.n_max)*self.ft(self.k1)
             assert torch.allclose(self.lam,lam_ref,rtol=1e-8,atol=0)
         self.coeffs = self.ift(self.ytilde/self.lam).real
+        self._double_n_omega()
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -320,6 +321,10 @@ class FastGPRLattice(_FastGP):
             ft,
             ift,
         )
+        self.omega = torch.exp(-torch.pi*1j*torch.arange(self.n_max,device=self.device)/self.n_max)
+    def _double_n_omega(self):
+        omega_new = torch.exp(-torch.pi*1j*(2*torch.arange(self.n_min,device=self.device)+1)/self.n_max)
+        self.omega = torch.vstack([self.omega,omega_new]).T.flatten()
     def _sample(self, n_min, n_max):
         x = torch.from_numpy(self.dd_obj.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
         return x,x
@@ -334,8 +339,6 @@ class FastGPRLattice(_FastGP):
         return (x-z)%1
     def _kernel_parts_from_delta(self, delta):
         return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
-    def _omega(self, n):
-        return torch.exp(-torch.pi*1j*torch.arange(n,device=self.device)/n)
 
 class FastGPRDigitalNetB2(_FastGP):
     def __init__(self,
@@ -380,6 +383,10 @@ class FastGPRDigitalNetB2(_FastGP):
             ft,
             ift,
         )
+        self.omega = torch.ones(self.n_max,device=self.device)
+    def _double_n_omega(self):
+        omega_new = torch.ones(self.n_min,device=self.device)
+        self.omega = torch.vstack([self.omega,omega_new]).T.flatten()
     def _sample(self, n_min, n_max):
         _x = torch.from_numpy(self.dd_obj.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
         x = self._convert_from_b(_x)
@@ -405,5 +412,3 @@ class FastGPRDigitalNetB2(_FastGP):
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
     def _kernel_parts_from_delta(self, delta):
         return torch.stack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
-    def _omega(self, n):
-        return torch.ones(n,device=self.device)
