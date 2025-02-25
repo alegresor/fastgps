@@ -14,6 +14,7 @@ class _FastGP(torch.nn.Module):
         noise,
         device,
         save_y,
+        save_k1,
         tfs_scale,
         tfs_lengthscales,
         tfs_noise,
@@ -56,17 +57,52 @@ class _FastGP(torch.nn.Module):
         self.ft = ft 
         self.ift = ift
         self.save_y = save_y
+        self.save_k1 = save_k1
         self.x,self._x = self._sample(self.n_min,self.n_max)
         y = self.f(self.x)
         assert y.size(-1)==self.n_max
         self.d_out = y.numel()/self.n_max
+        self.y_shape = list(y.shape)
         self.ytilde = self.ft(y)
-        if self.save_y: 
-            self.y = y
         self.k1full = self._kernel_parts(self._x,self._x[None,0,:])
         k1 = self._kernel_from_parts(self.k1full)
         k1[0] += self.noise
         self.lam = np.sqrt(self.n_max)*self.ft(k1)
+        self.coeffs = self.ift(self.ytilde/self.lam).real
+        if self.save_y: 
+            self.y = y
+        if self.save_k1:
+            self.k1 = k1
+    def double_n(self, _check:bool=True):
+        self.n_min = self.n_max 
+        self.n_max = 2*self.n_max
+        x_new,_x_new = self._sample(self.n_min,self.n_max)
+        ynew = self.f(x_new)
+        ytilde_new = self.ft(ynew)
+        omega = self._omega(self.n_min)
+        assert list(ynew.shape)==self.y_shape
+        k1full_new = self._kernel_parts(_x_new,self._x[None,0,:])
+        k1_new = self._kernel_from_parts(k1full_new)
+        lam_new = np.sqrt(self.n_min)*self.ft(k1_new)
+        gamma = self.lam**2-omega**2*lam_new**2
+        self.ytilde = 1/np.sqrt(2)*torch.hstack([
+            self.ytilde+omega*ytilde_new,
+            self.ytilde-omega*ytilde_new])
+        self.lam = torch.hstack([
+            self.lam+omega*lam_new,
+            self.lam-omega*lam_new])
+        self.y_shape[-1] *= 2
+        if self.save_y:
+            self.y = torch.cat([self.y,ynew],-1)
+        if self.save_k1:
+            self.k1 = torch.cat([self.k1,k1_new],-1)
+        if _check:
+            assert self.save_y, "the double_n method with _check=True requires save_y=True"
+            assert self.save_k1, "the double_n method with _check=True requires save_k1=True"
+            ytilde_ref = self.ft(self.y)
+            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-8,atol=0)
+            lam_ref = np.sqrt(self.n_max)*self.ft(self.k1)
+            assert torch.allclose(self.lam,lam_ref,rtol=1e-8,atol=0)
         self.coeffs = self.ift(self.ytilde/self.lam).real
     @property
     def scale(self):
@@ -251,6 +287,7 @@ class FastGPRLattice(_FastGP):
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
+            save_k1 = False,
             tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -273,6 +310,7 @@ class FastGPRLattice(_FastGP):
             lengthscales,
             noise,device,
             save_y,
+            save_k1,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -296,6 +334,8 @@ class FastGPRLattice(_FastGP):
         return (x-z)%1
     def _kernel_parts_from_delta(self, delta):
         return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
+    def _omega(self, n):
+        return torch.exp(-torch.pi*1j*torch.arange(n,device=self.device)/n)
 
 class FastGPRDigitalNetB2(_FastGP):
     def __init__(self,
@@ -308,6 +348,7 @@ class FastGPRDigitalNetB2(_FastGP):
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
+            save_k1 = False,
             tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -329,6 +370,7 @@ class FastGPRDigitalNetB2(_FastGP):
             lengthscales,
             noise,device,
             save_y,
+            save_k1,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -363,3 +405,5 @@ class FastGPRDigitalNetB2(_FastGP):
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
     def _kernel_parts_from_delta(self, delta):
         return torch.stack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
+    def _omega(self, n):
+        return torch.ones(n,device=self.device)
