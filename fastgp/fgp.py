@@ -57,13 +57,13 @@ class _FastGP(torch.nn.Module):
         self.ift = ift
         self.save_y = save_y
         self.x,self._x = self._sample(self.n_min,self.n_max)
-        self.k1full = self._kernel_parts(self._x,self._x[None,0,:])
         y = self.f(self.x)
         assert y.size(-1)==self.n_max
         self.d_out = y.numel()/self.n_max
         self.ytilde = self.ft(y)
         if self.save_y: 
             self.y = y
+        self.k1full = self._kernel_parts(self._x,self._x[None,0,:])
         k1 = self._kernel_from_parts(self.k1full)
         k1[0] += self.noise
         self.lam = np.sqrt(self.n_max)*self.ft(k1)
@@ -152,13 +152,42 @@ class _FastGP(torch.nn.Module):
             return self.post_ci_grad(x)
 
 class FastGPRLattice(_FastGP):
+    """
+    x = torch.rand(5,fgp.d)
+    z = torch.rand(7,fgp.d)
+
+
+    pmean = fgp.post_mean(x)
+    print(pmean.shape)
+
+    pcov = fgp.post_cov(x,z)
+    print(pcov.shape)
+
+    pcov = fgp.post_cov(fgp.x[:5],fgp.x[:5])
+    print(pcov.shape)
+
+    pvar = fgp.post_var(x[:5])
+    print(pvar.shape)
+
+    pvar = fgp.post_var(fgp.x[:5])
+    print(pvar)
+    print(pvar.shape)
+
+    pmean,pstd,q,ci_low,ci_high = fgp.post_ci(fgp.x[:5])
+    print(pmean)
+    print(pstd)
+    print(q)
+    print(ci_low)
+    print(ci_high)
+    print(fgp.y[:5])
+    """
     def __init__(self,
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
             lattice:qp.Lattice = qp.Lattice(2,seed=7),
             n:int = 2**16,
-            alpha:int = 3,
+            alpha:int = 2,
             global_scale:float = 1., 
-            lengthscales:torch.Tensor = 1., 
+            lengthscales:torch.Tensor = 1e4, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
@@ -202,6 +231,8 @@ class FastGPRLattice(_FastGP):
             self.__const_for_kernel = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
         return self.__const_for_kernel
     def _ominus(self, x, z):
+        assert ((0<=x)&(x<=1)).all(), "x should have all elements in [0,1]"
+        assert ((0<=z)&(z<=1)).all(), "z should have all elements in [0,1]"
         return (x-z)%1
     def _kernel_parts_from_delta(self, delta):
         return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
@@ -211,9 +242,9 @@ class FastGPRDigitalNetB2(_FastGP):
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
             dnb2:qp.DigitalNetB2 = qp.DigitalNetB2(2,seed=7),
             n:int = 2**16,
-            alpha:int = 3,
+            alpha:int = 2,
             global_scale:float = 1., 
-            lengthscales:torch.Tensor = 1., 
+            lengthscales:torch.Tensor = 1e1, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
@@ -252,19 +283,23 @@ class FastGPRDigitalNetB2(_FastGP):
         x = self._convert_from_b(_x)
         return x,_x
     def _convert_to_b(self, x):
-        return torch.floor(x*2**(self.t)).to(torch.int64)
+        return torch.floor((x%1)*2**(self.t)).to(torch.int64)
     def _convert_from_b(self, xb):
         return xb*2**(-self.t)
     def _ominus(self, x_or_xb, z_or_zb):
         fp_x = torch.is_floating_point(x_or_xb)
         fp_z = torch.is_floating_point(z_or_zb)
+        if fp_x:
+            assert ((0<=x_or_xb)&(x_or_xb<=1)).all(), "x should have all elements in [0,1]"
+        if fp_z:
+            assert ((0<=z_or_zb)&(z_or_zb<=1)).all(), "z should have all elements in [0,1]"
         if (not fp_x) and (not fp_z):
             return x_or_xb^z_or_zb
         elif (not fp_x) and fp_z:
             return x_or_xb^self._convert_to_b(z_or_zb)
-        elif fp_x and (not fp_x):
-            return self._convert_to_b(x_or_xb)^z_or_xb
-        else: # fp_x and fp_z 
+        elif fp_x and (not fp_z):
+            return self._convert_to_b(x_or_xb)^z_or_zb
+        else: # fp_x and fp_z
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
     def _kernel_parts_from_delta(self, delta):
         return torch.stack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
