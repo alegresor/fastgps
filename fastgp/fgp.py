@@ -77,22 +77,6 @@ class _FastGP(torch.nn.Module):
     @property
     def noise(self):
         return self.tf_noise(self.raw_noise)
-    def fit(self, steps:int=10, optimizer:torch.optim.Optimizer=None, lr:float=1e-1):
-        assert isinstance(steps,int)
-        if optimizer is None: 
-            optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
-        assert isinstance(optimizer,torch.optim.Optimizer)
-        for i in range(steps+1):
-            mll = (self.ytilde*self.lam*self.ytilde).real.sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+self.d_out*self.n_max*np.log(2*np.pi)
-            print(mll)
-            if i==steps: break
-            mll.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            k1 = self._kernel_from_parts(self.k1full)
-            k1[0] += self.noise
-            self.lam = np.sqrt(self.n_max)*self.ft(k1)
-        self.coeffs = self.ift(self.ytilde/self.lam).real
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
@@ -150,6 +134,23 @@ class _FastGP(torch.nn.Module):
     def post_ci(self, x, confidence=0.99):
         with torch.no_grad():
             return self.post_ci_grad(x)
+    def fit(self, steps:int=10, optimizer:torch.optim.Optimizer=None, lr:float=1e-1):
+        assert isinstance(steps,int)
+        if optimizer is None: 
+            optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
+        assert isinstance(optimizer,torch.optim.Optimizer)
+        mll_const = self.d_out*self.n_max*np.log(2*np.pi)
+        for i in range(steps+1):
+            mll = (torch.abs(self.ytilde)**2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
+            print(mll)
+            if i==steps: break
+            mll.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            k1 = self._kernel_from_parts(self.k1full)
+            k1[0] += self.noise
+            self.lam = np.sqrt(self.n_max)*self.ft(k1)
+        self.coeffs = self.ift(self.ytilde/self.lam).real
 
 class FastGPRLattice(_FastGP):
     """
@@ -244,7 +245,7 @@ class FastGPRDigitalNetB2(_FastGP):
             n:int = 2**16,
             alpha:int = 2,
             global_scale:float = 1., 
-            lengthscales:torch.Tensor = 1e1, 
+            lengthscales:torch.Tensor = 5e2, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
