@@ -1,7 +1,9 @@
 import torch 
-import qmcpy as qp
+import qmcpy as qmcpy
 import numpy as np 
 import scipy.stats 
+import typing 
+import os
 
 class _FastGP(torch.nn.Module):
     def __init__(self,
@@ -22,7 +24,7 @@ class _FastGP(torch.nn.Module):
         requires_grad_noise, 
         ft,
         ift,
-    ):
+        ):
         super().__init__()
         assert torch.get_default_dtype()==torch.float64, "fast transforms do not work without torch.float64 precision" 
         self.device = torch.device(device)
@@ -69,7 +71,10 @@ class _FastGP(torch.nn.Module):
         self.coeffs = self.ift(self.ytilde/self.lam).real
         if self.save_y: 
             self.y = y
-    def double_n(self, _check:bool=True):
+    def double_n(self):
+        """
+        Double the sample size n and perform efficient updates.
+        """
         self.n_min = self.n_max 
         self.n_max = 2*self.n_max
         x_new,_x_new = self._sample(self.n_min,self.n_max)
@@ -91,8 +96,9 @@ class _FastGP(torch.nn.Module):
         self.y_shape[-1] *= 2
         if self.save_y:
             self.y = torch.cat([self.y,ynew],-1)
-        if _check:
-            assert self.save_y, "the double_n method with _check=True requires save_y=True"
+        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+        if FASTGP_DEBUG=="True":
+            assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             ytilde_ref = self.ft(self.y)
             assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-6,atol=0)
             k1 = self._kernel_from_parts(self.k1full)
@@ -123,13 +129,42 @@ class _FastGP(torch.nn.Module):
     def kernel(self, x, z):
         return self._kernel_from_parts(self._kernel_parts(x,z))
     def post_mean_grad(self, x):
+        """
+        Posterior mean with gradient. 
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+        
+        Returns:
+            torch.Tensor: posterior mean vector with shape (N,) and requires_grad=True
+        """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         k = self.kernel(x[:,None,:],self._x[None,:,:])
         return torch.einsum("il,...l->...i",k,self.coeffs)
     def post_mean(self, x):
+        """
+        Posterior mean.
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+        
+        Returns:
+            torch.Tensor: posterior mean vector with shape (**batch_shape,N)
+        """
         with torch.no_grad():
             return self.post_mean_grad(x)
     def post_cov_grad(self, x, z):
+        """
+        Posterior covariance with gradient. 
+        If torch.equal(x,z) then the diagonal of the covariance matrix is forced to be non-negative. 
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+            z (torch.Tensor): sampling locations with shape (M,d)
+        
+        Returns:
+            torch.Tensor: posterior covariance matrix with shape (N,M) and requires_grad=True
+        """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
         equal = torch.equal(x,z)
@@ -144,9 +179,29 @@ class _FastGP(torch.nn.Module):
             kmat[nrange,nrange] = diag 
         return kmat
     def post_cov(self, x, z):
+        """
+        Posterior covariance. 
+        If torch.equal(x,z) then the diagonal of the covariance matrix is forced to be non-negative. 
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+            z (torch.Tensor): sampling locations with shape (M,d)
+        
+        Returns:
+            torch.Tensor: posterior covariance matrix with shape (N,M)
+        """
         with torch.no_grad():
             return self.post_cov_grad(x,z)
     def post_var_grad(self, x):
+        """
+        Posterior variance with gradient. Forced to be non-negative.  
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+        
+        Returns:
+            torch.Tensor: posterior variance vector with shape (N,) and requires_grad=True
+        """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         k = self.kernel(x,x)
         k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
@@ -154,25 +209,59 @@ class _FastGP(torch.nn.Module):
         diag[diag<0] = 0 
         return diag        
     def post_var(self, x):
+        """
+        Posterior variance. Forced to be non-negative.  
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+        
+        Returns:
+            torch.Tensor: posterior variance vector with shape (N,)
+        """
         with torch.no_grad():
             return self.post_var_grad(x)
-    def post_std_grad(self, x):
-        return torch.sqrt(self.post_var_grad(x))
-    def post_std(self, x):
-        return torch.sqrt(self.post_var(x))
-    def post_ci_grad(self, x, confidence=0.99):
+    def post_ci_grad(self, x, confidence:float=0.99):
+        """
+        Posterior credible interval with gradients.
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+            confidence (float): confidence level in (0,1) for the credible interval
+        
+        Returns:
+            torch.Tensor: posterior mean with shape (N,) and requires_grad=True
+            torch.Tensor: posterior variance with shape (N,) and requires_grad=True
+            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
+            torch.Tensor: credible interval lower bound with shape (N,) and requires_grad=True
+            torch.Tensor: credible interval upper bound with shape (N,) and requires_grad=True
+        """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
         pmean = self.post_mean_grad(x) 
-        pstd = self.post_std_grad(x)
+        pvar = self.post_var_grad(x)
+        pstd = torch.sqrt(pvar)
         ci_low = pmean-q*pstd 
         ci_high = pmean+q*pstd 
-        return pmean,pstd,q,ci_low,ci_high
+        return pmean,pvar,q,ci_low,ci_high
     def post_ci(self, x, confidence=0.99):
+        """
+        Posterior credible interval.
+
+        Args:
+            x (torch.Tensor): sampling locations with shape (N,d)
+            confidence (float): confidence level in (0,1) for the credible interval
+        
+        Returns:
+            torch.Tensor: posterior mean with shape (N,)
+            torch.Tensor: posterior variance with shape (N,)
+            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
+            torch.Tensor: credible interval lower bound with shape (N,)
+            torch.Tensor: credible interval upper bound with shape (N,)
+        """
         with torch.no_grad():
             return self.post_ci_grad(x)
     def fit(self,
-        steps:int = 5000,
+        iterations:int = 5000,
         optimizer:torch.optim.Optimizer = None,
         lr:float = 1e-1,
         store_mll_hist:bool = True, 
@@ -182,9 +271,26 @@ class _FastGP(torch.nn.Module):
         verbose:int = 5,
         verbose_indent:int = 4,
         stop_crit_improvement_threshold:float = 1e-5,
-        stop_crit_wait_steps:int = 10,
-    ):
-        assert isinstance(steps,int) and steps>=0
+        stop_crit_wait_iterations:int = 10,
+        ):
+        """
+        Args:
+            iterations (int): number of optimization iterations
+            optimizer (torch.optim.Optimizer): optimizer defaulted to torch.optim.Rprop(self.parameters(),lr=lr)
+            lr (float): learning rate for default optimizer
+            store_mll_hist (bool): it True, store and return iteration data for mll
+            store_scale_hist (bool): it True, store and return iteration data for the kernel scale parameter
+            store_lengthscales_hist (bool): it True, store and return iteration data for the kernel lengthscale parameters
+            store_noise_hist (bool): it True, store and return iteration data for noise
+            verbose (int): log every verbose iterations, set to 0 for silent mode
+            verbose_indent (int): indent to be applied when logging, helpful for logging multiple models
+            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by stop_crit_improvement_threshold for stop_crit_wait_iterations iterations 
+            stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for stop_crit_improvement_threshold
+        
+        Returns:
+            dict: iteration data, may include keys in ['mll_hist','scale_hist','lengthscales_hist',noise_hist'] dependeing on storage arguments
+        """
+        assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
             assert np.isscalar(lr) and lr>0, "require lr is a positive float"
             optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
@@ -196,36 +302,36 @@ class _FastGP(torch.nn.Module):
         assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
         assert isinstance(stop_crit_improvement_threshold,float) and 0<=stop_crit_improvement_threshold<1, "require stop_crit_improvement_threshold is a float in [0,1)"
-        assert isinstance(stop_crit_wait_steps,int) and stop_crit_wait_steps>0
+        assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
         if store_mll_hist:
-            mll_hist = torch.empty(steps+1)
+            mll_hist = torch.empty(iterations+1)
         store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
         store_lengthscales_hist = store_lengthscales_hist and self.raw_lengthscales.requires_grad
         store_noise_hist = store_noise_hist and self.raw_noise.requires_grad
         if store_scale_hist:
-            scale_hist = torch.empty(steps+1)
+            scale_hist = torch.empty(iterations+1)
         if store_lengthscales_hist:
-            lengthscales_hist = torch.empty((steps+1,self.d))
+            lengthscales_hist = torch.empty((iterations+1,self.d))
         if store_noise_hist:
-            noise_hist = torch.empty(steps+1)
+            noise_hist = torch.empty(iterations+1)
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s | %-s"%("step of %.1e"%steps,"NMLL","noise","scale","lengthscales")
+            _s = "%16s | %-10s | %-10s | %-10s | %-s"%("iter of %.1e"%iterations,"NMLL","noise","scale","lengthscales")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n_max*np.log(2*np.pi)
         stop_crit_best_mll = torch.inf 
         stop_crit_save_mll = torch.inf 
-        stop_crit_steps_without_improvement_mll = 0
-        for i in range(steps+1):
+        stop_crit_iterations_without_improvement_mll = 0
+        for i in range(iterations+1):
             mll = (torch.abs(self.ytilde)**2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
             if mll.item()<stop_crit_save_mll*(1-stop_crit_improvement_threshold):
-                stop_crit_steps_without_improvement_mll = 0
+                stop_crit_iterations_without_improvement_mll = 0
                 stop_crit_save_mll = stop_crit_best_mll
             else:
-                stop_crit_steps_without_improvement_mll += 1
-            break_condition = i==steps or stop_crit_steps_without_improvement_mll==stop_crit_wait_steps
+                stop_crit_iterations_without_improvement_mll += 1
+            break_condition = i==iterations or stop_crit_iterations_without_improvement_mll==stop_crit_wait_iterations
             if store_mll_hist:
                 mll_hist[i] = mll.item()
             if store_scale_hist:
@@ -247,9 +353,21 @@ class _FastGP(torch.nn.Module):
             k1[0] += self.noise
             self.lam = np.sqrt(self.n_max)*self.ft(k1)
         self.coeffs = self.ift(self.ytilde/self.lam).real
+        data = {}
+        if store_mll_hist:
+            data["mll_hist"] = mll_hist
+        if store_scale_hist:
+            data["scale_hist"] = scale_hist
+        if store_lengthscales_hist:
+            data["lengthscales_hist"] = lengthscales_hist
+        if store_noise_hist:
+            data["noise_hist"] = noise_hist
+        return data
 
 class FastGPRLattice(_FastGP):
     """
+    Fast Gaussian process regression using lattice points and shift invariant kernels
+
     >>> torch.set_default_dtype(torch.float64)
 
     >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
@@ -265,7 +383,7 @@ class FastGPRLattice(_FastGP):
     >>> d = 3
     >>> fgp = FastGPRLattice(
     ...     f = f_ackley,
-    ...     lattice = qp.Lattice(dimension=d,seed=7),
+    ...     lattice = qmcpy.Lattice(dimension=d,seed=7),
     ...     n = 2**10)
 
     >>> rng = torch.Generator().manual_seed(17)
@@ -277,11 +395,10 @@ class FastGPRLattice(_FastGP):
     torch.Size([128])
     >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
     tensor(1.0424)
-    >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
-    True
+    >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
-    >>> fgp.fit()
-         step of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+    >>> data = fgp.fit()
+         iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
                 5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
@@ -290,6 +407,9 @@ class FastGPRLattice(_FastGP):
                 2.00e+01 | 1.26e+04   | 1.00e-16   | 1.16e-02   | [1.16e+02 1.16e+02 1.16e+02]
                 2.50e+01 | 1.15e+04   | 1.00e-16   | 1.50e-02   | [1.50e+02 1.50e+02 1.50e+02]
                 2.80e+01 | 1.15e+04   | 1.00e-16   | 1.67e-02   | [1.67e+02 1.67e+02 1.67e+02]
+    >>> list(data.keys())
+    ['mll_hist', 'scale_hist', 'lengthscales_hist']
+
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(1.0094)
     >>> z = torch.rand((2**8,d),generator=rng)
@@ -300,14 +420,12 @@ class FastGPRLattice(_FastGP):
     >>> pcov = fgp.post_cov(x,x)
     >>> pcov.shape
     torch.Size([128, 128])
-    >>> (pcov.diagonal()>=0).all().item()
-    True
+    >>> assert (pcov.diagonal()>=0).all()
 
     >>> pvar = fgp.post_var(x)
     >>> pvar.shape
     torch.Size([128])
-    >>> (pvar>=0).all().item()
-    True
+    >>> assert (pvar>=0).all()
 
     >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
     >>> q
@@ -321,7 +439,8 @@ class FastGPRLattice(_FastGP):
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(1.0324)
 
-    >>> fgp.fit(verbose=False)
+    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+    >>> assert len(data)==0
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0315)
 
@@ -329,32 +448,54 @@ class FastGPRLattice(_FastGP):
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0305)
 
-    >>> fgp.fit(verbose=False)
+    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+    >>> assert len(data)==0
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0253)
     """
     def __init__(self,
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
-            lattice:qp.Lattice = qp.Lattice(2,seed=7),
+            lattice:qmcpy.Lattice = qmcpy.Lattice(2,seed=7),
             n:int = 2**16,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 1e4, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
-            save_y = True,
-            tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            requires_grad_scale = True, 
-            requires_grad_lengthscales = True, 
-            requires_grad_noise = False, 
+            save_y:bool = True,
+            tfs_scale:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_lengthscales:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_noise:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            requires_grad_scale:bool = True, 
+            requires_grad_lengthscales:bool = True, 
+            requires_grad_noise:bool = False, 
             compile_fts:bool = False,
+            compile_fts_kwargs:dict = {},
             ):
-        assert isinstance(alpha,int) and alpha in qp.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qp.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
-        assert isinstance(lattice,qp.Lattice) and lattice.order=="NATURAL" and lattice.replications==1, "lattice should be a qp.Lattice instance with order='NATURAL' and replications=1"
-        ft = torch.compile(qp.fftbr_torch) if compile_fts else qp.fftbr_torch
-        ift = torch.compile(qp.ifftbr_torch) if compile_fts else qp.ifftbr_torch
+        """
+        Args:
+            f (callable): function to model where y=f(x) with x.shape==(n,d) and y.shape==(...,n)
+            lattice (qmcpy.Lattice): lattice generator with order="NATURAL"
+            n (int): number of lattice points to generate
+            alpha (int): smoothness parameter
+            scale (float): kernel global scaling parameter
+            lengthscales (torch.Tensor): length d vector of kernel lengthscales
+            noise (float): positive noise variance i.e. nugget term
+            device (torch.device): torch device which is required to support torch.float64
+            save_y (bool): setting to False will save memory by NOT saving self.y=f(x)
+            tfs_scale (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_lengthscales (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_noise (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            requires_grad_scale (bool): wheather or not to optimize the scale parameter
+            requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
+            requires_grad_noise (bool): wheather or not to optimize the noise parameter
+            compile_fts (bool): if True, use torch.compile(qmcpy.fftbr_torch,**compile_fts) and torch.compile(qmcpy.ifftbr_torch,**compile_fts), otherwise use the uncompiled versions
+            compile_fts_kwargs (dict): keyword arguments to torch.compile, see the compile_fts argument
+        """
+        assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
+        assert isinstance(lattice,qmcpy.Lattice) and lattice.order=="NATURAL" and lattice.replications==1, "lattice should be a qmcpy.Lattice instance with order='NATURAL' and replications=1"
+        ft = torch.compile(qmcpy.fftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fftbr_torch
+        ift = torch.compile(qmcpy.ifftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.ifftbr_torch
         self.__const_for_kernel = None
         super().__init__(
             f,
@@ -391,7 +532,7 @@ class FastGPRLattice(_FastGP):
         assert ((0<=z)&(z<=1)).all(), "z should have all elements in [0,1]"
         return (x-z)%1
     def _kernel_parts_from_delta(self, delta):
-        return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
+        return self.const_for_kernel*torch.stack([qmcpy.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
 
 class FastGPRDigitalNetB2(_FastGP):
     """
@@ -410,7 +551,7 @@ class FastGPRDigitalNetB2(_FastGP):
     >>> d = 3
     >>> fgp = FastGPRDigitalNetB2(
     ...     f = f_ackley,
-    ...     dnb2 = qp.DigitalNetB2(dimension=d,seed=7),
+    ...     dnb2 = qmcpy.DigitalNetB2(dimension=d,seed=7),
     ...     n = 2**10)
 
     >>> rng = torch.Generator().manual_seed(17)
@@ -422,11 +563,10 @@ class FastGPRDigitalNetB2(_FastGP):
     torch.Size([128])
     >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
     tensor(1.0105)
-    >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
-    True
+    >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
-    >>> fgp.fit()
-         step of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+    >>> data = fgp.fit()
+         iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
                 5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
@@ -451,6 +591,9 @@ class FastGPRDigitalNetB2(_FastGP):
                 1.00e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.08e-01 1.64e-01 1.12e-01]
                 1.05e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
                 1.08e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+    >>> list(data.keys())
+    ['mll_hist', 'scale_hist', 'lengthscales_hist']
+
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0309)
     >>> z = torch.rand((2**8,d),generator=rng)
@@ -461,14 +604,12 @@ class FastGPRDigitalNetB2(_FastGP):
     >>> pcov = fgp.post_cov(x,x)
     >>> pcov.shape
     torch.Size([128, 128])
-    >>> (pcov.diagonal()>=0).all().item()
-    True
+    >>> assert (pcov.diagonal()>=0).all()
 
     >>> pvar = fgp.post_var(x)
     >>> pvar.shape
     torch.Size([128])
-    >>> (pvar>=0).all().item()
-    True
+    >>> assert (pvar>=0).all()
 
     >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
     >>> q
@@ -482,7 +623,8 @@ class FastGPRDigitalNetB2(_FastGP):
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0277)
 
-    >>> fgp.fit(verbose=False)
+    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+    >>> assert len(data)==0
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0274)
 
@@ -490,32 +632,54 @@ class FastGPRDigitalNetB2(_FastGP):
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0236)
 
-    >>> fgp.fit(verbose=False)
+    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+    >>> assert len(data)==0
     >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
     tensor(0.0234)
     """
     def __init__(self,
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
-            dnb2:qp.DigitalNetB2 = qp.DigitalNetB2(2,seed=7),
+            dnb2:qmcpy.DigitalNetB2 = qmcpy.DigitalNetB2(2,seed=7),
             n:int = 2**16,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 5e2, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
-            save_y = True,
-            tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            requires_grad_scale = True, 
-            requires_grad_lengthscales = True, 
-            requires_grad_noise = False, 
+            save_y:bool = True,
+            tfs_scale:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_lengthscales:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_noise:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            requires_grad_scale:bool = True, 
+            requires_grad_lengthscales:bool = True, 
+            requires_grad_noise:bool = False, 
             compile_fts:bool = False,
+            compile_fts_kwargs: dict = {},
             ):
-        assert isinstance(alpha,int) and alpha in qp.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qp.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
-        assert isinstance(dnb2,qp.DigitalNetB2) and dnb2.order=="NATURAL" and dnb2.replications==1 and dnb2.t_lms<64 and dnb2.randomize in ['LMS_DS','DS','LMS','FALSE'], "dnb2 should be a qp.DigitalNetB2 instance with order='NATURAL', replications=1, t_lms<64, and randomize in ['LMS_DS','DS','LMS','FALSE']"
+        """
+        Args:
+            f (callable): function to model where y=f(x) with x.shape==(n,d) and y.shape==(...,n)
+            lattice (qmcpy.Lattice): lattice generator with order="NATURAL"
+            n (int): number of lattice points to generate
+            alpha (int): smoothness parameter
+            scale (float): kernel global scaling parameter
+            lengthscales (torch.Tensor): length d vector of kernel lengthscales
+            noise (float): positive noise variance i.e. nugget term
+            device (torch.device): torch device which is required to support torch.float64
+            save_y (bool): setting to False will save memory by NOT saving self.y=f(x)
+            tfs_scale (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_lengthscales (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_noise (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            requires_grad_scale (bool): wheather or not to optimize the scale parameter
+            requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
+            requires_grad_noise (bool): wheather or not to optimize the noise parameter
+            compile_fts (bool): if True, use torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs), otherwise use the uncompiled versions
+            compile_fts_kwargs (dict): keyword arguments to torch.compile, see the compile_fts argument
+        """
+        assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
+        assert isinstance(dnb2,qmcpy.DigitalNetB2) and dnb2.order=="NATURAL" and dnb2.replications==1 and dnb2.t_lms<64 and dnb2.randomize in ['LMS_DS','DS','LMS','FALSE'], "dnb2 should be a qmcpy.DigitalNetB2 instance with order='NATURAL', replications=1, t_lms<64, and randomize in ['LMS_DS','DS','LMS','FALSE']"
         self.t = dnb2.t_lms
-        ft = ift = torch.compile(qp.fwht_torch) if compile_fts else qp.fwht_torch
+        ft = ift = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
             f,
             dnb2,
@@ -562,4 +726,4 @@ class FastGPRDigitalNetB2(_FastGP):
         else: # fp_x and fp_z
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
     def _kernel_parts_from_delta(self, delta):
-        return torch.stack([qp.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
+        return torch.stack([qmcpy.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
