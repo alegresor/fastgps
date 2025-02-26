@@ -1,0 +1,32 @@
+name: tests
+on: [push]
+
+jobs:
+  tests:
+    name: Tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+        matrix:
+            os: ["macos-latest", "ubuntu-latest", "windows-latest"]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          miniforge-version: "latest"
+          auto-activate-base: true
+      - name: Install Base Dependencies 
+        shell: bash -l {0}
+        run: |
+          pip install numpy
+          pip intall scipy
+          pip install torch 
+          pip install qmcpy
+          pip install pytest
+      - name: Install fastgp 
+        shell: bash -l {0}
+        run: |
+          pip install -e .
+      - name: Doctests
+        shell: bash -l {0}
+        run: | 
+          pytest --doctest-modules fastgp/ --disable-pytest-warnings
