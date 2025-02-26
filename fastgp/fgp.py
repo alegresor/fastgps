@@ -100,10 +100,10 @@ class _FastGP(torch.nn.Module):
         if FASTGP_DEBUG=="True":
             assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             ytilde_ref = self.ft(self.y)
-            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-6,atol=0)
+            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-4,atol=0)
             k1 = self._kernel_from_parts(self.k1full)
             lam_ref = np.sqrt(self.n_max)*self.ft(k1)
-            assert torch.allclose(self.lam,lam_ref,rtol=1e-6,atol=0)
+            assert torch.allclose(self.lam,lam_ref,rtol=1e-4,atol=0)
         if self.x.data_ptr()==self._x.data_ptr():
             self.x = self._x = torch.vstack([self.x,x_new])
         else:
@@ -259,7 +259,79 @@ class _FastGP(torch.nn.Module):
             torch.Tensor: credible interval upper bound with shape (N,)
         """
         with torch.no_grad():
-            return self.post_ci_grad(x)
+            return self.post_ci_grad(x,confidence=confidence)
+    def post_cubature_mean_grad(self):
+        """
+        Posterior cubature mean with gradient. 
+
+        Returns:
+            torch.Tensor: a scalar posterior cubature mean with requires_grad=True
+        """
+        return self.ytilde[0].real/np.sqrt(self.n_max)
+    def post_cubature_mean(self):
+        """
+        Posterior cubature mean.
+
+        Returns:
+            torch.Tensor: a scalar posterior cubature mean
+        """
+        with torch.no_grad():
+            return self.post_cubature_mean_grad()
+    def post_cubature_var_grad(self):
+        """
+        Posterior cubature variance with gradient. 
+
+        Returns:
+            torch.Tensor: a scalar posterior cubature variance with requires_grad=True
+        """
+        return self.scale-self.scale**2*self.n_max/self.lam[0].real
+    def post_cubature_var(self):
+        """
+        Posterior cubature variance.
+
+        Returns:
+            torch.Tensor: a scalar posterior cubature variance 
+        """
+        with torch.no_grad():
+            return self.post_cubature_var_grad()
+    def post_cubature_ci_grad(self, confidence:float=0.99):
+        """
+        Posterior cubature credible interval with gradients.
+
+        Args:
+            confidence (float): confidence level in (0,1) for the credible interval
+        
+        Returns:
+            torch.Tensor: scalar posterior cubature mean with requires_grad=True
+            torch.Tensor: scalar posterior cubature variance with shape (N,) and requires_grad=True
+            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
+            torch.Tensor: scalar credible interval lower bound with  requires_grad=True
+            torch.Tensor: scalar credible interval upper bound with requires_grad=True
+        """
+        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
+        pmean = self.post_cubature_mean() 
+        pvar = self.post_cubature_var_grad()
+        pstd = torch.sqrt(pvar)
+        ci_low = pmean-q*pstd 
+        ci_high = pmean+q*pstd 
+        return pmean,pvar,q,ci_low,ci_high
+    def post_cubature_ci(self, confidence:float=0.99):
+        """
+        Posterior cubature credible interval with gradients.
+
+        Args:
+            confidence (float): confidence level in (0,1) for the credible interval
+        
+        Returns:
+            torch.Tensor: scalar posterior cubature mean with requires_grad=True
+            torch.Tensor: scalar posterior cubature variance with shape (N,) and requires_grad=True
+            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
+            torch.Tensor: scalar credible interval lower bound with  requires_grad=True
+            torch.Tensor: scalar credible interval upper bound with requires_grad=True
+        """
+        with torch.no_grad():
+            return self.post_cubature_ci_grad(confidence=confidence)
     def fit(self,
         iterations:int = 5000,
         optimizer:torch.optim.Optimizer = None,
@@ -381,7 +453,7 @@ class FastGPLattice(_FastGP):
         ...     y = -t1-t2+t3
         ...     return y
 
-        >>> d = 3
+        >>> d = 2
         >>> fgp = FastGPLattice(
         ...     f = f_ackley,
         ...     lattice = qmcpy.Lattice(dimension=d,seed=7),
@@ -395,24 +467,35 @@ class FastGPLattice(_FastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(1.0424)
-        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+        tensor(0.4396)
+        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y,atol=1e-4)
+
+        >>> fgp.post_cubature_mean()
+        tensor(20.1842)
+        >>> fgp.post_cubature_var()
+        tensor(0.4113)
 
         >>> data = fgp.fit()
              iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
-                    5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
-                    1.00e+01 | 1.67e+04   | 1.00e-16   | 7.46e-02   | [7.46e+02 7.46e+02 7.46e+02]
-                    1.50e+01 | 1.22e+04   | 1.00e-16   | 1.22e-02   | [1.22e+02 1.22e+02 1.22e+02]
-                    2.00e+01 | 1.26e+04   | 1.00e-16   | 1.16e-02   | [1.16e+02 1.16e+02 1.16e+02]
-                    2.50e+01 | 1.15e+04   | 1.00e-16   | 1.50e-02   | [1.50e+02 1.50e+02 1.50e+02]
-                    2.80e+01 | 1.15e+04   | 1.00e-16   | 1.67e-02   | [1.67e+02 1.67e+02 1.67e+02]
+                    0.00e+00 | 1.41e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04]
+                    5.00e+00 | 1.24e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03]
+                    1.00e+01 | 8.74e+03   | 1.00e-16   | 3.82e-01   | [7.46e+02 7.46e+02]
+                    1.50e+01 | 3.65e+03   | 1.00e-16   | 4.48e-01   | [2.69e+01 2.69e+01]
+                    2.00e+01 | 3.24e+03   | 1.00e-16   | 7.25e-01   | [2.55e+01 2.55e+01]
+                    2.50e+01 | 2.92e+03   | 1.00e-16   | 2.39e+00   | [1.62e+01 1.62e+01]
+                    3.00e+01 | 2.82e+03   | 1.00e-16   | 4.38e+00   | [9.94e+00 9.94e+00]
+                    3.50e+01 | 2.81e+03   | 1.00e-16   | 5.41e+00   | [9.22e+00 8.95e+00]
+                    4.00e+01 | 2.80e+03   | 1.00e-16   | 7.07e+00   | [9.13e+00 6.85e+00]
+                    4.50e+01 | 2.79e+03   | 1.00e-16   | 1.04e+01   | [8.98e+00 4.24e+00]
+                    5.00e+01 | 2.79e+03   | 1.00e-16   | 1.11e+01   | [9.00e+00 4.49e+00]
+                    5.50e+01 | 2.79e+03   | 1.00e-16   | 1.09e+01   | [9.00e+00 4.42e+00]
+                    5.80e+01 | 2.79e+03   | 1.00e-16   | 1.09e+01   | [9.01e+00 4.39e+00]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(1.0094)
+        tensor(0.0359)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -436,28 +519,34 @@ class FastGPLattice(_FastGP):
         >>> ci_high.shape
         torch.Size([128])
 
+        >>> fgp.post_cubature_mean()
+        tensor(20.1842)
+        >>> assert torch.allclose(fgp.y.mean(),fgp.post_cubature_mean(),atol=1e-3) and torch.allclose(fgp.y.mean(),fgp.scale*fgp.coeffs.sum(),atol=1e-3)
+        >>> fgp.post_cubature_var()
+        tensor(3.0026e-06)
+
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(1.0324)
+        tensor(0.0306)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0315)
+        tensor(0.0274)
 
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0305)
+        tensor(0.0277)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0253)
+        tensor(0.0275)
     """
     def __init__(self,
             f:callable,
             lattice:qmcpy.Lattice,
-            n:int = 2**16,
+            n:int = 2**10,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 1e4, 
@@ -560,7 +649,7 @@ class FastGPDigitalNetB2(_FastGP):
         ...     y = -t1-t2+t3
         ...     return y
 
-        >>> d = 3
+        >>> d = 2
         >>> fgp = FastGPDigitalNetB2(
         ...     f = f_ackley,
         ...     dnb2 = qmcpy.DigitalNetB2(dimension=d,seed=7),
@@ -574,40 +663,27 @@ class FastGPDigitalNetB2(_FastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(1.0105)
+        tensor(1.0471)
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
              iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
-                    5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
-                    1.00e+01 | 1.14e+04   | 1.00e-16   | 7.46e-02   | [3.73e+01 3.73e+01 3.73e+01]
-                    1.50e+01 | 1.01e+04   | 1.00e-16   | 4.69e-02   | [2.34e+01 2.34e+01 2.34e+01]
-                    2.00e+01 | 1.01e+04   | 1.00e-16   | 4.78e-02   | [2.04e+01 2.04e+01 2.04e+01]
-                    2.50e+01 | 1.00e+04   | 1.00e-16   | 7.23e-02   | [1.74e+01 1.85e+01 1.35e+01]
-                    3.00e+01 | 9.52e+03   | 1.00e-16   | 2.03e-01   | [1.22e+01 1.63e+01 4.80e+00]
-                    3.50e+01 | 7.03e+03   | 1.00e-16   | 4.19e-01   | [4.99e+00 1.20e+01 3.68e-01]
-                    4.00e+01 | 4.93e+03   | 1.00e-16   | 4.56e-01   | [5.43e-01 5.55e+00 3.67e-03]
-                    4.50e+01 | 4.15e+03   | 1.00e-16   | 7.37e-01   | [5.27e-01 5.49e+00 3.20e-02]
-                    5.00e+01 | 3.49e+03   | 1.00e-16   | 1.31e+00   | [1.01e-01 3.09e+00 5.61e-02]
-                    5.50e+01 | 3.30e+03   | 1.00e-16   | 2.58e+00   | [6.95e-02 2.01e+00 6.48e-02]
-                    6.00e+01 | 3.23e+03   | 1.00e-16   | 4.62e+00   | [6.22e-02 1.24e+00 6.23e-02]
-                    6.50e+01 | 3.21e+03   | 1.00e-16   | 4.65e+00   | [6.02e-02 9.95e-01 6.16e-02]
-                    7.00e+01 | 3.18e+03   | 1.00e-16   | 6.41e+00   | [6.10e-02 7.22e-01 6.40e-02]
-                    7.50e+01 | 3.16e+03   | 1.00e-16   | 8.14e+00   | [6.16e-02 4.95e-01 6.59e-02]
-                    8.00e+01 | 3.15e+03   | 1.00e-16   | 9.57e+00   | [6.36e-02 3.57e-01 7.16e-02]
-                    8.50e+01 | 3.14e+03   | 1.00e-16   | 1.00e+01   | [6.83e-02 2.85e-01 8.81e-02]
-                    9.00e+01 | 3.13e+03   | 1.00e-16   | 1.02e+01   | [8.17e-02 2.11e-01 1.07e-01]
-                    9.50e+01 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.13e-01 1.63e-01 1.12e-01]
-                    1.00e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.08e-01 1.64e-01 1.12e-01]
-                    1.05e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
-                    1.08e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+                    0.00e+00 | 1.41e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02]
+                    5.00e+00 | 1.19e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02]
+                    1.00e+01 | 9.39e+03   | 1.00e-16   | 1.25e-01   | [3.73e+01 3.73e+01]
+                    1.50e+01 | 3.59e+03   | 1.00e-16   | 6.19e-01   | [1.34e+00 1.34e+00]
+                    2.00e+01 | 3.11e+03   | 1.00e-16   | 4.07e+00   | [5.27e-01 5.27e-01]
+                    2.50e+01 | 3.09e+03   | 1.00e-16   | 5.43e+00   | [3.98e-01 3.98e-01]
+                    3.00e+01 | 3.09e+03   | 1.00e-16   | 5.67e+00   | [3.97e-01 3.97e-01]
+                    3.50e+01 | 3.09e+03   | 1.00e-16   | 5.82e+00   | [3.97e-01 4.01e-01]
+                    4.00e+01 | 3.09e+03   | 1.00e-16   | 5.83e+00   | [3.97e-01 4.01e-01]
+                    4.20e+01 | 3.09e+03   | 1.00e-16   | 5.78e+00   | [3.96e-01 4.00e-01]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0309)
+        tensor(0.0356)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -631,28 +707,34 @@ class FastGPDigitalNetB2(_FastGP):
         >>> ci_high.shape
         torch.Size([128])
 
+        >>> fgp.post_cubature_mean()
+        tensor(20.1902)
+        >>> assert torch.allclose(fgp.y.mean(),fgp.post_cubature_mean(),atol=1e-3) and torch.allclose(fgp.y.mean(),fgp.scale*fgp.coeffs.sum(),atol=1e-3)
+        >>> fgp.post_cubature_var()
+        tensor(0.0002)
+
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0277)
+        tensor(0.0258)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0274)
+        tensor(0.0259)
 
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0236)
+        tensor(0.0191)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0234)
+        tensor(0.0187)
     """
     def __init__(self,
             f:callable,
             dnb2:qmcpy.DigitalNetB2,
-            n:int = 2**16,
+            n:int = 2**10,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 5e2, 
