@@ -100,7 +100,7 @@ class _FastGP(torch.nn.Module):
         if FASTGP_DEBUG=="True":
             assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             ytilde_ref = self.ft(self.y)
-            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-4,atol=0)
+            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-8,atol=0)
             k1 = self._kernel_from_parts(self.k1full)
             lam_ref = np.sqrt(self.n_max)*self.ft(k1)
             assert torch.allclose(self.lam,lam_ref,rtol=1e-4,atol=0)
