@@ -14,7 +14,6 @@ class _FastGP(torch.nn.Module):
         noise,
         device,
         save_y,
-        save_k1,
         tfs_scale,
         tfs_lengthscales,
         tfs_noise,
@@ -57,7 +56,6 @@ class _FastGP(torch.nn.Module):
         self.ft = ft 
         self.ift = ift
         self.save_y = save_y
-        self.save_k1 = save_k1
         self.x,self._x = self._sample(self.n_min,self.n_max)
         y = self.f(self.x)
         assert y.size(-1)==self.n_max
@@ -71,9 +69,7 @@ class _FastGP(torch.nn.Module):
         self.coeffs = self.ift(self.ytilde/self.lam).real
         if self.save_y: 
             self.y = y
-        if self.save_k1:
-            self.k1 = k1
-    def double_n(self, _check:bool=False):
+    def double_n(self, _check:bool=True):
         self.n_min = self.n_max 
         self.n_max = 2*self.n_max
         x_new,_x_new = self._sample(self.n_min,self.n_max)
@@ -91,18 +87,22 @@ class _FastGP(torch.nn.Module):
         self.lam = torch.hstack([
             self.lam+omega_lam_new,
             self.lam-omega_lam_new])
+        self.k1full = torch.vstack([self.k1full,k1full_new])
         self.y_shape[-1] *= 2
         if self.save_y:
             self.y = torch.cat([self.y,ynew],-1)
-        if self.save_k1:
-            self.k1 = torch.cat([self.k1,k1_new],-1)
         if _check:
             assert self.save_y, "the double_n method with _check=True requires save_y=True"
-            assert self.save_k1, "the double_n method with _check=True requires save_k1=True"
             ytilde_ref = self.ft(self.y)
-            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-8,atol=0)
-            lam_ref = np.sqrt(self.n_max)*self.ft(self.k1)
-            assert torch.allclose(self.lam,lam_ref,rtol=1e-8,atol=0)
+            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-6,atol=0)
+            k1 = self._kernel_from_parts(self.k1full)
+            lam_ref = np.sqrt(self.n_max)*self.ft(k1)
+            assert torch.allclose(self.lam,lam_ref,rtol=1e-6,atol=0)
+        if self.x.data_ptr()==self._x.data_ptr():
+            self.x = self._x = torch.vstack([self.x,x_new])
+        else:
+            self.x = torch.vstack([self.x,x_new])
+            self._x = torch.vstack([self._x,_x_new])
         self.coeffs = self.ift(self.ytilde/self.lam).real
         self._double_n_omega()
     @property
@@ -250,33 +250,88 @@ class _FastGP(torch.nn.Module):
 
 class FastGPRLattice(_FastGP):
     """
-    x = torch.rand(5,fgp.d)
-    z = torch.rand(7,fgp.d)
+    >>> torch.set_default_dtype(torch.float64)
 
+    >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
+    ...     # https://www.sfu.ca/~ssurjano/ackley.html
+    ...     assert x.ndim==2
+    ...     x = 2*scaling*x-scaling
+    ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
+    ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
+    ...     t3 = a+np.exp(1)
+    ...     y = -t1-t2+t3
+    ...     return y
 
-    pmean = fgp.post_mean(x)
-    print(pmean.shape)
+    >>> d = 3
+    >>> fgp = FastGPRLattice(
+    ...     f = f_ackley,
+    ...     lattice = qp.Lattice(dimension=d,seed=7),
+    ...     n = 2**10)
 
-    pcov = fgp.post_cov(x,z)
-    print(pcov.shape)
+    >>> rng = torch.Generator().manual_seed(17)
+    >>> x = torch.rand((2**7,d),generator=rng)
+    >>> y = f_ackley(x)
+    
+    >>> pmean = fgp.post_mean(x)
+    >>> pmean.shape
+    torch.Size([128])
+    >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
+    tensor(1.0424)
+    >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+    True
 
-    pcov = fgp.post_cov(fgp.x[:5],fgp.x[:5])
-    print(pcov.shape)
+    >>> fgp.fit()
+         step of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
+                5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
+                1.00e+01 | 1.67e+04   | 1.00e-16   | 7.46e-02   | [7.46e+02 7.46e+02 7.46e+02]
+                1.50e+01 | 1.22e+04   | 1.00e-16   | 1.22e-02   | [1.22e+02 1.22e+02 1.22e+02]
+                2.00e+01 | 1.26e+04   | 1.00e-16   | 1.16e-02   | [1.16e+02 1.16e+02 1.16e+02]
+                2.50e+01 | 1.15e+04   | 1.00e-16   | 1.50e-02   | [1.50e+02 1.50e+02 1.50e+02]
+                2.80e+01 | 1.15e+04   | 1.00e-16   | 1.67e-02   | [1.67e+02 1.67e+02 1.67e+02]
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(1.0094)
+    >>> z = torch.rand((2**8,d),generator=rng)
+    >>> pcov = fgp.post_cov(x,z)
+    >>> pcov.shape
+    torch.Size([128, 256])
 
-    pvar = fgp.post_var(x[:5])
-    print(pvar.shape)
+    >>> pcov = fgp.post_cov(x,x)
+    >>> pcov.shape
+    torch.Size([128, 128])
+    >>> (pcov.diagonal()>=0).all().item()
+    True
 
-    pvar = fgp.post_var(fgp.x[:5])
-    print(pvar)
-    print(pvar.shape)
+    >>> pvar = fgp.post_var(x)
+    >>> pvar.shape
+    torch.Size([128])
+    >>> (pvar>=0).all().item()
+    True
 
-    pmean,pstd,q,ci_low,ci_high = fgp.post_ci(fgp.x[:5])
-    print(pmean)
-    print(pstd)
-    print(q)
-    print(ci_low)
-    print(ci_high)
-    print(fgp.y[:5])
+    >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
+    >>> q
+    np.float64(2.5758293035489004)
+    >>> ci_low.shape
+    torch.Size([128])
+    >>> ci_high.shape
+    torch.Size([128])
+
+    >>> fgp.double_n()
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(1.0324)
+
+    >>> fgp.fit(verbose=False)
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0315)
+
+    >>> fgp.double_n()
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0305)
+
+    >>> fgp.fit(verbose=False)
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0253)
     """
     def __init__(self,
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
@@ -288,7 +343,6 @@ class FastGPRLattice(_FastGP):
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
-            save_k1 = False,
             tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -311,7 +365,6 @@ class FastGPRLattice(_FastGP):
             lengthscales,
             noise,device,
             save_y,
-            save_k1,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -341,6 +394,106 @@ class FastGPRLattice(_FastGP):
         return self.const_for_kernel*torch.stack([qp.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
 
 class FastGPRDigitalNetB2(_FastGP):
+    """
+    >>> torch.set_default_dtype(torch.float64)
+
+    >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
+    ...     # https://www.sfu.ca/~ssurjano/ackley.html
+    ...     assert x.ndim==2
+    ...     x = 2*scaling*x-scaling
+    ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
+    ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
+    ...     t3 = a+np.exp(1)
+    ...     y = -t1-t2+t3
+    ...     return y
+
+    >>> d = 3
+    >>> fgp = FastGPRDigitalNetB2(
+    ...     f = f_ackley,
+    ...     dnb2 = qp.DigitalNetB2(dimension=d,seed=7),
+    ...     n = 2**10)
+
+    >>> rng = torch.Generator().manual_seed(17)
+    >>> x = torch.rand((2**7,d),generator=rng)
+    >>> y = f_ackley(x)
+    
+    >>> pmean = fgp.post_mean(x)
+    >>> pmean.shape
+    torch.Size([128])
+    >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
+    tensor(1.0105)
+    >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+    True
+
+    >>> fgp.fit()
+         step of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
+                5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
+                1.00e+01 | 1.14e+04   | 1.00e-16   | 7.46e-02   | [3.73e+01 3.73e+01 3.73e+01]
+                1.50e+01 | 1.01e+04   | 1.00e-16   | 4.69e-02   | [2.34e+01 2.34e+01 2.34e+01]
+                2.00e+01 | 1.01e+04   | 1.00e-16   | 4.78e-02   | [2.04e+01 2.04e+01 2.04e+01]
+                2.50e+01 | 1.00e+04   | 1.00e-16   | 7.23e-02   | [1.74e+01 1.85e+01 1.35e+01]
+                3.00e+01 | 9.52e+03   | 1.00e-16   | 2.03e-01   | [1.22e+01 1.63e+01 4.80e+00]
+                3.50e+01 | 7.03e+03   | 1.00e-16   | 4.19e-01   | [4.99e+00 1.20e+01 3.68e-01]
+                4.00e+01 | 4.93e+03   | 1.00e-16   | 4.56e-01   | [5.43e-01 5.55e+00 3.67e-03]
+                4.50e+01 | 4.15e+03   | 1.00e-16   | 7.37e-01   | [5.27e-01 5.49e+00 3.20e-02]
+                5.00e+01 | 3.49e+03   | 1.00e-16   | 1.31e+00   | [1.01e-01 3.09e+00 5.61e-02]
+                5.50e+01 | 3.30e+03   | 1.00e-16   | 2.58e+00   | [6.95e-02 2.01e+00 6.48e-02]
+                6.00e+01 | 3.23e+03   | 1.00e-16   | 4.62e+00   | [6.22e-02 1.24e+00 6.23e-02]
+                6.50e+01 | 3.21e+03   | 1.00e-16   | 4.65e+00   | [6.02e-02 9.95e-01 6.16e-02]
+                7.00e+01 | 3.18e+03   | 1.00e-16   | 6.41e+00   | [6.10e-02 7.22e-01 6.40e-02]
+                7.50e+01 | 3.16e+03   | 1.00e-16   | 8.14e+00   | [6.16e-02 4.95e-01 6.59e-02]
+                8.00e+01 | 3.15e+03   | 1.00e-16   | 9.57e+00   | [6.36e-02 3.57e-01 7.16e-02]
+                8.50e+01 | 3.14e+03   | 1.00e-16   | 1.00e+01   | [6.83e-02 2.85e-01 8.81e-02]
+                9.00e+01 | 3.13e+03   | 1.00e-16   | 1.02e+01   | [8.17e-02 2.11e-01 1.07e-01]
+                9.50e+01 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.13e-01 1.63e-01 1.12e-01]
+                1.00e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.08e-01 1.64e-01 1.12e-01]
+                1.05e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+                1.08e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0309)
+    >>> z = torch.rand((2**8,d),generator=rng)
+    >>> pcov = fgp.post_cov(x,z)
+    >>> pcov.shape
+    torch.Size([128, 256])
+
+    >>> pcov = fgp.post_cov(x,x)
+    >>> pcov.shape
+    torch.Size([128, 128])
+    >>> (pcov.diagonal()>=0).all().item()
+    True
+
+    >>> pvar = fgp.post_var(x)
+    >>> pvar.shape
+    torch.Size([128])
+    >>> (pvar>=0).all().item()
+    True
+
+    >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
+    >>> q
+    np.float64(2.5758293035489004)
+    >>> ci_low.shape
+    torch.Size([128])
+    >>> ci_high.shape
+    torch.Size([128])
+
+    >>> fgp.double_n()
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0277)
+
+    >>> fgp.fit(verbose=False)
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0274)
+
+    >>> fgp.double_n()
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0236)
+
+    >>> fgp.fit(verbose=False)
+    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+    tensor(0.0234)
+    """
     def __init__(self,
             f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
             dnb2:qp.DigitalNetB2 = qp.DigitalNetB2(2,seed=7),
@@ -351,7 +504,6 @@ class FastGPRDigitalNetB2(_FastGP):
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y = True,
-            save_k1 = False,
             tfs_scale = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -373,7 +525,6 @@ class FastGPRDigitalNetB2(_FastGP):
             lengthscales,
             noise,device,
             save_y,
-            save_k1,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
