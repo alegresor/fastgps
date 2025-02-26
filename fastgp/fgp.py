@@ -399,7 +399,7 @@ class FastGPLattice(_FastGP):
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
-            iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
                     5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
@@ -578,7 +578,7 @@ class FastGPDigitalNetB2(_FastGP):
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
-            iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
                     5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
