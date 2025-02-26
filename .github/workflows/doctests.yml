@@ -18,7 +18,7 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install numpy
-          pip intall scipy
+          pip install scipy
           pip install torch 
           pip install qmcpy
           pip install pytest
