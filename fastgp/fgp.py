@@ -542,6 +542,12 @@ class FastGPLattice(_FastGP):
         >>> fgp.post_cubature_var()
         tensor(3.0169e-06)
 
+        >>> pcmean,pcvar,q,pci_low,pci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> pci_low
+        tensor(20.1797)
+        >>> pci_high
+        tensor(20.1887)
+
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0309)
@@ -729,6 +735,12 @@ class FastGPDigitalNetB2(_FastGP):
         tensor(20.1896)
         >>> fgp.post_cubature_var()
         tensor(0.0002)
+
+        >>> pcmean,pcvar,q,pci_low,pci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> pci_low
+        tensor(20.1564)
+        >>> pci_high
+        tensor(20.2228)
 
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
