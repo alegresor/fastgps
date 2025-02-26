@@ -267,7 +267,13 @@ class _FastGP(torch.nn.Module):
         Returns:
             torch.Tensor: a scalar posterior cubature mean with requires_grad=True
         """
-        return self.ytilde[0].real/np.sqrt(self.n_max)
+        pcmean = self.scale*self.coeffs.sum()
+        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+        if FASTGP_DEBUG=="True":
+            assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
+            assert torch.allclose(pcmean,self.y.mean(),atol=1e-3), "pcmean-self.y.mean()"
+            assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3)
+        return pcmean
     def post_cubature_mean(self):
         """
         Posterior cubature mean.
@@ -467,30 +473,42 @@ class FastGPLattice(_FastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.4396)
-        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y,atol=1e-4)
+        tensor(0.0348)
+        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y,atol=1e-3)
 
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(0.4113)
+        tensor(7.0015e-09)
 
         >>> data = fgp.fit()
              iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 1.41e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04]
-                    5.00e+00 | 1.24e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03]
-                    1.00e+01 | 8.74e+03   | 1.00e-16   | 3.82e-01   | [7.46e+02 7.46e+02]
-                    1.50e+01 | 3.65e+03   | 1.00e-16   | 4.48e-01   | [2.69e+01 2.69e+01]
-                    2.00e+01 | 3.24e+03   | 1.00e-16   | 7.25e-01   | [2.55e+01 2.55e+01]
-                    2.50e+01 | 2.92e+03   | 1.00e-16   | 2.39e+00   | [1.62e+01 1.62e+01]
-                    3.00e+01 | 2.82e+03   | 1.00e-16   | 4.38e+00   | [9.94e+00 9.94e+00]
-                    3.50e+01 | 2.81e+03   | 1.00e-16   | 5.41e+00   | [9.22e+00 8.95e+00]
-                    4.00e+01 | 2.80e+03   | 1.00e-16   | 7.07e+00   | [9.13e+00 6.85e+00]
-                    4.50e+01 | 2.79e+03   | 1.00e-16   | 1.04e+01   | [8.98e+00 4.24e+00]
-                    5.00e+01 | 2.79e+03   | 1.00e-16   | 1.11e+01   | [9.00e+00 4.49e+00]
-                    5.50e+01 | 2.79e+03   | 1.00e-16   | 1.09e+01   | [9.00e+00 4.42e+00]
-                    5.80e+01 | 2.79e+03   | 1.00e-16   | 1.09e+01   | [9.01e+00 4.39e+00]
+                    0.00e+00 | 3.70e+05   | 1.00e-08   | 1.00e+00   | [1.00e+00 1.00e+00]
+                    5.00e+00 | 4.12e+04   | 1.00e-08   | 2.10e+00   | [2.10e+00 2.10e+00]
+                    1.00e+01 | 2.81e+03   | 1.00e-08   | 8.00e+00   | [8.00e+00 8.00e+00]
+                    1.50e+01 | 2.82e+03   | 1.00e-08   | 8.18e+00   | [8.18e+00 8.18e+00]
+                    2.00e+01 | 2.80e+03   | 1.00e-08   | 7.73e+00   | [7.73e+00 7.73e+00]
+                    2.50e+01 | 2.80e+03   | 1.00e-08   | 7.74e+00   | [7.74e+00 7.64e+00]
+                    3.00e+01 | 2.80e+03   | 1.00e-08   | 7.75e+00   | [7.66e+00 7.45e+00]
+                    3.50e+01 | 2.80e+03   | 1.00e-08   | 8.04e+00   | [7.69e+00 7.17e+00]
+                    4.00e+01 | 2.79e+03   | 1.00e-08   | 8.83e+00   | [7.69e+00 6.54e+00]
+                    4.50e+01 | 2.79e+03   | 1.00e-08   | 9.01e+00   | [7.68e+00 6.39e+00]
+                    5.00e+01 | 2.79e+03   | 1.00e-08   | 9.20e+00   | [7.69e+00 6.18e+00]
+                    5.50e+01 | 2.79e+03   | 1.00e-08   | 9.77e+00   | [7.71e+00 5.82e+00]
+                    6.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [7.74e+00 5.64e+00]
+                    6.50e+01 | 2.79e+03   | 1.00e-08   | 1.01e+01   | [7.74e+00 5.58e+00]
+                    7.00e+01 | 2.79e+03   | 1.00e-08   | 1.01e+01   | [7.78e+00 5.51e+00]
+                    7.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [7.87e+00 5.44e+00]
+                    8.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [8.10e+00 5.29e+00]
+                    8.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [8.70e+00 4.92e+00]
+                    9.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.15e+00 4.73e+00]
+                    9.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.21e+00 4.62e+00]
+                    1.00e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.64e+00 4.41e+00]
+                    1.05e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.02e+01 4.21e+00]
+                    1.10e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.01e+01 4.17e+00]
+                    1.15e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.01e+01 4.16e+00]
+                    1.17e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.02e+01 4.17e+00]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
@@ -521,13 +539,12 @@ class FastGPLattice(_FastGP):
 
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
-        >>> assert torch.allclose(fgp.y.mean(),fgp.post_cubature_mean(),atol=1e-3) and torch.allclose(fgp.y.mean(),fgp.scale*fgp.coeffs.sum(),atol=1e-3)
         >>> fgp.post_cubature_var()
-        tensor(3.0026e-06)
+        tensor(3.0169e-06)
 
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0306)
+        tensor(0.0309)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
@@ -549,8 +566,8 @@ class FastGPLattice(_FastGP):
             n:int = 2**10,
             alpha:int = 2,
             scale:float = 1., 
-            lengthscales:torch.Tensor = 1e4, 
-            noise:float = 1e-16, 
+            lengthscales:torch.Tensor = 1, 
+            noise:float = 1e-8, 
             device:torch.device = "cpu",
             save_y:bool = True,
             tfs_scale:typing.Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -663,27 +680,28 @@ class FastGPDigitalNetB2(_FastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(1.0471)
+        tensor(0.0336)
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
              iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 1.41e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02]
-                    5.00e+00 | 1.19e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02]
-                    1.00e+01 | 9.39e+03   | 1.00e-16   | 1.25e-01   | [3.73e+01 3.73e+01]
-                    1.50e+01 | 3.59e+03   | 1.00e-16   | 6.19e-01   | [1.34e+00 1.34e+00]
-                    2.00e+01 | 3.11e+03   | 1.00e-16   | 4.07e+00   | [5.27e-01 5.27e-01]
-                    2.50e+01 | 3.09e+03   | 1.00e-16   | 5.43e+00   | [3.98e-01 3.98e-01]
-                    3.00e+01 | 3.09e+03   | 1.00e-16   | 5.67e+00   | [3.97e-01 3.97e-01]
-                    3.50e+01 | 3.09e+03   | 1.00e-16   | 5.82e+00   | [3.97e-01 4.01e-01]
-                    4.00e+01 | 3.09e+03   | 1.00e-16   | 5.83e+00   | [3.97e-01 4.01e-01]
-                    4.20e+01 | 3.09e+03   | 1.00e-16   | 5.78e+00   | [3.96e-01 4.00e-01]
+                    0.00e+00 | 3.35e+03   | 1.00e-16   | 1.00e+00   | [1.00e+00 1.00e+00]
+                    5.00e+00 | 3.24e+03   | 1.00e-16   | 1.55e+00   | [9.21e-01 9.21e-01]
+                    1.00e+01 | 3.13e+03   | 1.00e-16   | 2.94e+00   | [6.32e-01 6.32e-01]
+                    1.50e+01 | 3.10e+03   | 1.00e-16   | 3.78e+00   | [5.13e-01 5.13e-01]
+                    2.00e+01 | 3.10e+03   | 1.00e-16   | 4.53e+00   | [4.65e-01 4.65e-01]
+                    2.50e+01 | 3.09e+03   | 1.00e-16   | 4.93e+00   | [4.35e-01 4.35e-01]
+                    3.00e+01 | 3.09e+03   | 1.00e-16   | 5.31e+00   | [4.15e-01 4.20e-01]
+                    3.50e+01 | 3.09e+03   | 1.00e-16   | 5.65e+00   | [3.84e-01 4.19e-01]
+                    4.00e+01 | 3.09e+03   | 1.00e-16   | 5.71e+00   | [3.83e-01 4.19e-01]
+                    4.50e+01 | 3.09e+03   | 1.00e-16   | 5.72e+00   | [3.84e-01 4.19e-01]
+                    4.80e+01 | 3.09e+03   | 1.00e-16   | 5.73e+00   | [3.84e-01 4.19e-01]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0356)
+        tensor(0.0355)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -708,8 +726,7 @@ class FastGPDigitalNetB2(_FastGP):
         torch.Size([128])
 
         >>> fgp.post_cubature_mean()
-        tensor(20.1902)
-        >>> assert torch.allclose(fgp.y.mean(),fgp.post_cubature_mean(),atol=1e-3) and torch.allclose(fgp.y.mean(),fgp.scale*fgp.coeffs.sum(),atol=1e-3)
+        tensor(20.1896)
         >>> fgp.post_cubature_var()
         tensor(0.0002)
 
@@ -720,11 +737,11 @@ class FastGPDigitalNetB2(_FastGP):
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0259)
+        tensor(0.0258)
 
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0191)
+        tensor(0.0192)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
@@ -737,7 +754,7 @@ class FastGPDigitalNetB2(_FastGP):
             n:int = 2**10,
             alpha:int = 2,
             scale:float = 1., 
-            lengthscales:torch.Tensor = 5e2, 
+            lengthscales:torch.Tensor = 1, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
             save_y:bool = True,
