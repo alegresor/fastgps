@@ -73,7 +73,7 @@ class _FastGP(torch.nn.Module):
             self.y = y
     def double_n(self):
         """
-        Double the sample size n and perform efficient updates.
+        Double the sample size `n` and perform efficient updates.
         """
         self.n_min = self.n_max 
         self.n_max = 2*self.n_max
@@ -364,98 +364,99 @@ class _FastGP(torch.nn.Module):
             data["noise_hist"] = noise_hist
         return data
 
-class FastGPRLattice(_FastGP):
+class FastGPLattice(_FastGP):
     """
     Fast Gaussian process regression using lattice points and shift invariant kernels
 
-    >>> torch.set_default_dtype(torch.float64)
+    Examples:
+        >>> torch.set_default_dtype(torch.float64)
 
-    >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
-    ...     # https://www.sfu.ca/~ssurjano/ackley.html
-    ...     assert x.ndim==2
-    ...     x = 2*scaling*x-scaling
-    ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
-    ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
-    ...     t3 = a+np.exp(1)
-    ...     y = -t1-t2+t3
-    ...     return y
+        >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
+        ...     # https://www.sfu.ca/~ssurjano/ackley.html
+        ...     assert x.ndim==2
+        ...     x = 2*scaling*x-scaling
+        ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
+        ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
+        ...     t3 = a+np.exp(1)
+        ...     y = -t1-t2+t3
+        ...     return y
 
-    >>> d = 3
-    >>> fgp = FastGPRLattice(
-    ...     f = f_ackley,
-    ...     lattice = qmcpy.Lattice(dimension=d,seed=7),
-    ...     n = 2**10)
+        >>> d = 3
+        >>> fgp = FastGPLattice(
+        ...     f = f_ackley,
+        ...     lattice = qmcpy.Lattice(dimension=d,seed=7),
+        ...     n = 2**10)
 
-    >>> rng = torch.Generator().manual_seed(17)
-    >>> x = torch.rand((2**7,d),generator=rng)
-    >>> y = f_ackley(x)
-    
-    >>> pmean = fgp.post_mean(x)
-    >>> pmean.shape
-    torch.Size([128])
-    >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-    tensor(1.0424)
-    >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+        >>> rng = torch.Generator().manual_seed(17)
+        >>> x = torch.rand((2**7,d),generator=rng)
+        >>> y = f_ackley(x)
+        
+        >>> pmean = fgp.post_mean(x)
+        >>> pmean.shape
+        torch.Size([128])
+        >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
+        tensor(1.0424)
+        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
-    >>> data = fgp.fit()
-         iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
-                5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
-                1.00e+01 | 1.67e+04   | 1.00e-16   | 7.46e-02   | [7.46e+02 7.46e+02 7.46e+02]
-                1.50e+01 | 1.22e+04   | 1.00e-16   | 1.22e-02   | [1.22e+02 1.22e+02 1.22e+02]
-                2.00e+01 | 1.26e+04   | 1.00e-16   | 1.16e-02   | [1.16e+02 1.16e+02 1.16e+02]
-                2.50e+01 | 1.15e+04   | 1.00e-16   | 1.50e-02   | [1.50e+02 1.50e+02 1.50e+02]
-                2.80e+01 | 1.15e+04   | 1.00e-16   | 1.67e-02   | [1.67e+02 1.67e+02 1.67e+02]
-    >>> list(data.keys())
-    ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        >>> data = fgp.fit()
+            iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 2.72e+04   | 1.00e-16   | 1.00e+00   | [1.00e+04 1.00e+04 1.00e+04]
+                    5.00e+00 | 2.42e+04   | 1.00e-16   | 4.75e-01   | [4.75e+03 4.75e+03 4.75e+03]
+                    1.00e+01 | 1.67e+04   | 1.00e-16   | 7.46e-02   | [7.46e+02 7.46e+02 7.46e+02]
+                    1.50e+01 | 1.22e+04   | 1.00e-16   | 1.22e-02   | [1.22e+02 1.22e+02 1.22e+02]
+                    2.00e+01 | 1.26e+04   | 1.00e-16   | 1.16e-02   | [1.16e+02 1.16e+02 1.16e+02]
+                    2.50e+01 | 1.15e+04   | 1.00e-16   | 1.50e-02   | [1.50e+02 1.50e+02 1.50e+02]
+                    2.80e+01 | 1.15e+04   | 1.00e-16   | 1.67e-02   | [1.67e+02 1.67e+02 1.67e+02]
+        >>> list(data.keys())
+        ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(1.0094)
-    >>> z = torch.rand((2**8,d),generator=rng)
-    >>> pcov = fgp.post_cov(x,z)
-    >>> pcov.shape
-    torch.Size([128, 256])
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(1.0094)
+        >>> z = torch.rand((2**8,d),generator=rng)
+        >>> pcov = fgp.post_cov(x,z)
+        >>> pcov.shape
+        torch.Size([128, 256])
 
-    >>> pcov = fgp.post_cov(x,x)
-    >>> pcov.shape
-    torch.Size([128, 128])
-    >>> assert (pcov.diagonal()>=0).all()
+        >>> pcov = fgp.post_cov(x,x)
+        >>> pcov.shape
+        torch.Size([128, 128])
+        >>> assert (pcov.diagonal()>=0).all()
 
-    >>> pvar = fgp.post_var(x)
-    >>> pvar.shape
-    torch.Size([128])
-    >>> assert (pvar>=0).all()
+        >>> pvar = fgp.post_var(x)
+        >>> pvar.shape
+        torch.Size([128])
+        >>> assert (pvar>=0).all()
 
-    >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
-    >>> q
-    np.float64(2.5758293035489004)
-    >>> ci_low.shape
-    torch.Size([128])
-    >>> ci_high.shape
-    torch.Size([128])
+        >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
+        >>> q
+        np.float64(2.5758293035489004)
+        >>> ci_low.shape
+        torch.Size([128])
+        >>> ci_high.shape
+        torch.Size([128])
 
-    >>> fgp.double_n()
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(1.0324)
+        >>> fgp.double_n()
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(1.0324)
 
-    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-    >>> assert len(data)==0
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0315)
+        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+        >>> assert len(data)==0
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0315)
 
-    >>> fgp.double_n()
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0305)
+        >>> fgp.double_n()
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0305)
 
-    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-    >>> assert len(data)==0
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0253)
+        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+        >>> assert len(data)==0
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0253)
     """
     def __init__(self,
-            f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
-            lattice:qmcpy.Lattice = qmcpy.Lattice(2,seed=7),
+            f:callable,
+            lattice:qmcpy.Lattice,
             n:int = 2**16,
             alpha:int = 2,
             scale:float = 1., 
@@ -474,23 +475,31 @@ class FastGPRLattice(_FastGP):
             ):
         """
         Args:
-            f (callable): function to model where y=f(x) with x.shape==(n,d) and y.shape==(...,n)
-            lattice (qmcpy.Lattice): lattice generator with order="NATURAL"
+            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(...,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
+                ```python
+                f = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1)
+                ```
+            lattice (qmcpy.Lattice): lattice generator with order="NATURAL" and randomize in ["SHIFT","FALSE"], e.g.
+                ```python
+                d = 2 # dimension
+                lattice = qmcpy.Lattice(d,seed=7)
+                ```
+                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.lattice.lattice" target="_blank">`qmcpy.Lattice` docs</a> for more info
             n (int): number of lattice points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor): length d vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
-            save_y (bool): setting to False will save memory by NOT saving self.y=f(x)
+            save_y (bool): setting to False will save memory by NOT saving `self.y=f(x)`
             tfs_scale (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
-            compile_fts (bool): if True, use torch.compile(qmcpy.fftbr_torch,**compile_fts) and torch.compile(qmcpy.ifftbr_torch,**compile_fts), otherwise use the uncompiled versions
-            compile_fts_kwargs (dict): keyword arguments to torch.compile, see the compile_fts argument
+            compile_fts (bool): if True, use `torch.compile(qmcpy.fftbr_torch,**compile_fts)` and `torch.compile(qmcpy.ifftbr_torch,**compile_fts)`, otherwise use the uncompiled versions
+            compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the compile_fts argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
         assert isinstance(lattice,qmcpy.Lattice) and lattice.order=="NATURAL" and lattice.replications==1, "lattice should be a qmcpy.Lattice instance with order='NATURAL' and replications=1"
@@ -534,112 +543,115 @@ class FastGPRLattice(_FastGP):
     def _kernel_parts_from_delta(self, delta):
         return self.const_for_kernel*torch.stack([qmcpy.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
 
-class FastGPRDigitalNetB2(_FastGP):
+class FastGPDigitalNetB2(_FastGP):
     """
-    >>> torch.set_default_dtype(torch.float64)
-
-    >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
-    ...     # https://www.sfu.ca/~ssurjano/ackley.html
-    ...     assert x.ndim==2
-    ...     x = 2*scaling*x-scaling
-    ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
-    ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
-    ...     t3 = a+np.exp(1)
-    ...     y = -t1-t2+t3
-    ...     return y
-
-    >>> d = 3
-    >>> fgp = FastGPRDigitalNetB2(
-    ...     f = f_ackley,
-    ...     dnb2 = qmcpy.DigitalNetB2(dimension=d,seed=7),
-    ...     n = 2**10)
-
-    >>> rng = torch.Generator().manual_seed(17)
-    >>> x = torch.rand((2**7,d),generator=rng)
-    >>> y = f_ackley(x)
+    Fast Gaussian process regression using digitally shifted digital nets paired with digitally shift invariant kernels
     
-    >>> pmean = fgp.post_mean(x)
-    >>> pmean.shape
-    torch.Size([128])
-    >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-    tensor(1.0105)
-    >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+    Examples:
+        >>> torch.set_default_dtype(torch.float64)
 
-    >>> data = fgp.fit()
-         iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
-                5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
-                1.00e+01 | 1.14e+04   | 1.00e-16   | 7.46e-02   | [3.73e+01 3.73e+01 3.73e+01]
-                1.50e+01 | 1.01e+04   | 1.00e-16   | 4.69e-02   | [2.34e+01 2.34e+01 2.34e+01]
-                2.00e+01 | 1.01e+04   | 1.00e-16   | 4.78e-02   | [2.04e+01 2.04e+01 2.04e+01]
-                2.50e+01 | 1.00e+04   | 1.00e-16   | 7.23e-02   | [1.74e+01 1.85e+01 1.35e+01]
-                3.00e+01 | 9.52e+03   | 1.00e-16   | 2.03e-01   | [1.22e+01 1.63e+01 4.80e+00]
-                3.50e+01 | 7.03e+03   | 1.00e-16   | 4.19e-01   | [4.99e+00 1.20e+01 3.68e-01]
-                4.00e+01 | 4.93e+03   | 1.00e-16   | 4.56e-01   | [5.43e-01 5.55e+00 3.67e-03]
-                4.50e+01 | 4.15e+03   | 1.00e-16   | 7.37e-01   | [5.27e-01 5.49e+00 3.20e-02]
-                5.00e+01 | 3.49e+03   | 1.00e-16   | 1.31e+00   | [1.01e-01 3.09e+00 5.61e-02]
-                5.50e+01 | 3.30e+03   | 1.00e-16   | 2.58e+00   | [6.95e-02 2.01e+00 6.48e-02]
-                6.00e+01 | 3.23e+03   | 1.00e-16   | 4.62e+00   | [6.22e-02 1.24e+00 6.23e-02]
-                6.50e+01 | 3.21e+03   | 1.00e-16   | 4.65e+00   | [6.02e-02 9.95e-01 6.16e-02]
-                7.00e+01 | 3.18e+03   | 1.00e-16   | 6.41e+00   | [6.10e-02 7.22e-01 6.40e-02]
-                7.50e+01 | 3.16e+03   | 1.00e-16   | 8.14e+00   | [6.16e-02 4.95e-01 6.59e-02]
-                8.00e+01 | 3.15e+03   | 1.00e-16   | 9.57e+00   | [6.36e-02 3.57e-01 7.16e-02]
-                8.50e+01 | 3.14e+03   | 1.00e-16   | 1.00e+01   | [6.83e-02 2.85e-01 8.81e-02]
-                9.00e+01 | 3.13e+03   | 1.00e-16   | 1.02e+01   | [8.17e-02 2.11e-01 1.07e-01]
-                9.50e+01 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.13e-01 1.63e-01 1.12e-01]
-                1.00e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.08e-01 1.64e-01 1.12e-01]
-                1.05e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
-                1.08e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
-    >>> list(data.keys())
-    ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
+        ...     # https://www.sfu.ca/~ssurjano/ackley.html
+        ...     assert x.ndim==2
+        ...     x = 2*scaling*x-scaling
+        ...     t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
+        ...     t2 = torch.exp(torch.mean(torch.cos(c*x),1))
+        ...     t3 = a+np.exp(1)
+        ...     y = -t1-t2+t3
+        ...     return y
 
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0309)
-    >>> z = torch.rand((2**8,d),generator=rng)
-    >>> pcov = fgp.post_cov(x,z)
-    >>> pcov.shape
-    torch.Size([128, 256])
+        >>> d = 3
+        >>> fgp = FastGPDigitalNetB2(
+        ...     f = f_ackley,
+        ...     dnb2 = qmcpy.DigitalNetB2(dimension=d,seed=7),
+        ...     n = 2**10)
 
-    >>> pcov = fgp.post_cov(x,x)
-    >>> pcov.shape
-    torch.Size([128, 128])
-    >>> assert (pcov.diagonal()>=0).all()
+        >>> rng = torch.Generator().manual_seed(17)
+        >>> x = torch.rand((2**7,d),generator=rng)
+        >>> y = f_ackley(x)
+        
+        >>> pmean = fgp.post_mean(x)
+        >>> pmean.shape
+        torch.Size([128])
+        >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
+        tensor(1.0105)
+        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
-    >>> pvar = fgp.post_var(x)
-    >>> pvar.shape
-    torch.Size([128])
-    >>> assert (pvar>=0).all()
+        >>> data = fgp.fit()
+            iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 2.18e+04   | 1.00e-16   | 1.00e+00   | [5.00e+02 5.00e+02 5.00e+02]
+                    5.00e+00 | 1.88e+04   | 1.00e-16   | 4.75e-01   | [2.38e+02 2.38e+02 2.38e+02]
+                    1.00e+01 | 1.14e+04   | 1.00e-16   | 7.46e-02   | [3.73e+01 3.73e+01 3.73e+01]
+                    1.50e+01 | 1.01e+04   | 1.00e-16   | 4.69e-02   | [2.34e+01 2.34e+01 2.34e+01]
+                    2.00e+01 | 1.01e+04   | 1.00e-16   | 4.78e-02   | [2.04e+01 2.04e+01 2.04e+01]
+                    2.50e+01 | 1.00e+04   | 1.00e-16   | 7.23e-02   | [1.74e+01 1.85e+01 1.35e+01]
+                    3.00e+01 | 9.52e+03   | 1.00e-16   | 2.03e-01   | [1.22e+01 1.63e+01 4.80e+00]
+                    3.50e+01 | 7.03e+03   | 1.00e-16   | 4.19e-01   | [4.99e+00 1.20e+01 3.68e-01]
+                    4.00e+01 | 4.93e+03   | 1.00e-16   | 4.56e-01   | [5.43e-01 5.55e+00 3.67e-03]
+                    4.50e+01 | 4.15e+03   | 1.00e-16   | 7.37e-01   | [5.27e-01 5.49e+00 3.20e-02]
+                    5.00e+01 | 3.49e+03   | 1.00e-16   | 1.31e+00   | [1.01e-01 3.09e+00 5.61e-02]
+                    5.50e+01 | 3.30e+03   | 1.00e-16   | 2.58e+00   | [6.95e-02 2.01e+00 6.48e-02]
+                    6.00e+01 | 3.23e+03   | 1.00e-16   | 4.62e+00   | [6.22e-02 1.24e+00 6.23e-02]
+                    6.50e+01 | 3.21e+03   | 1.00e-16   | 4.65e+00   | [6.02e-02 9.95e-01 6.16e-02]
+                    7.00e+01 | 3.18e+03   | 1.00e-16   | 6.41e+00   | [6.10e-02 7.22e-01 6.40e-02]
+                    7.50e+01 | 3.16e+03   | 1.00e-16   | 8.14e+00   | [6.16e-02 4.95e-01 6.59e-02]
+                    8.00e+01 | 3.15e+03   | 1.00e-16   | 9.57e+00   | [6.36e-02 3.57e-01 7.16e-02]
+                    8.50e+01 | 3.14e+03   | 1.00e-16   | 1.00e+01   | [6.83e-02 2.85e-01 8.81e-02]
+                    9.00e+01 | 3.13e+03   | 1.00e-16   | 1.02e+01   | [8.17e-02 2.11e-01 1.07e-01]
+                    9.50e+01 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.13e-01 1.63e-01 1.12e-01]
+                    1.00e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.08e-01 1.64e-01 1.12e-01]
+                    1.05e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+                    1.08e+02 | 3.12e+03   | 1.00e-16   | 1.03e+01   | [1.07e-01 1.62e-01 1.12e-01]
+        >>> list(data.keys())
+        ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
-    >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
-    >>> q
-    np.float64(2.5758293035489004)
-    >>> ci_low.shape
-    torch.Size([128])
-    >>> ci_high.shape
-    torch.Size([128])
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0309)
+        >>> z = torch.rand((2**8,d),generator=rng)
+        >>> pcov = fgp.post_cov(x,z)
+        >>> pcov.shape
+        torch.Size([128, 256])
 
-    >>> fgp.double_n()
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0277)
+        >>> pcov = fgp.post_cov(x,x)
+        >>> pcov.shape
+        torch.Size([128, 128])
+        >>> assert (pcov.diagonal()>=0).all()
 
-    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-    >>> assert len(data)==0
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0274)
+        >>> pvar = fgp.post_var(x)
+        >>> pvar.shape
+        torch.Size([128])
+        >>> assert (pvar>=0).all()
 
-    >>> fgp.double_n()
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0236)
+        >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
+        >>> q
+        np.float64(2.5758293035489004)
+        >>> ci_low.shape
+        torch.Size([128])
+        >>> ci_high.shape
+        torch.Size([128])
 
-    >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-    >>> assert len(data)==0
-    >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-    tensor(0.0234)
+        >>> fgp.double_n()
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0277)
+
+        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+        >>> assert len(data)==0
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0274)
+
+        >>> fgp.double_n()
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0236)
+
+        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
+        >>> assert len(data)==0
+        >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
+        tensor(0.0234)
     """
     def __init__(self,
-            f:callable = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1), # https://www.sfu.ca/~ssurjano/stybtang.html
-            dnb2:qmcpy.DigitalNetB2 = qmcpy.DigitalNetB2(2,seed=7),
+            f:callable,
+            dnb2:qmcpy.DigitalNetB2,
             n:int = 2**16,
             alpha:int = 2,
             scale:float = 1., 
@@ -658,23 +670,31 @@ class FastGPRDigitalNetB2(_FastGP):
             ):
         """
         Args:
-            f (callable): function to model where y=f(x) with x.shape==(n,d) and y.shape==(...,n)
-            lattice (qmcpy.Lattice): lattice generator with order="NATURAL"
+            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(...,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
+                ```python
+                f = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1)
+                ```
+            dnb2 (qmcpy.DigitalNetB2): digital sequence generator in base $b=2$ with order="NATURAL" and randomize in ["LMS_DS","DS","LMS","FALSE"], e.g.
+                ```python
+                d = 2 # dimension
+                dnb2 = qmcpy.DigitalNetB2(2,seed=7)
+                ```
+                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info
             n (int): number of lattice points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor): length d vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
-            save_y (bool): setting to False will save memory by NOT saving self.y=f(x)
+            save_y (bool): setting to False will save memory by NOT saving `self.y=f(x)`
             tfs_scale (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (typing.Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
-            compile_fts (bool): if True, use torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs), otherwise use the uncompiled versions
-            compile_fts_kwargs (dict): keyword arguments to torch.compile, see the compile_fts argument
+            compile_fts (bool): if True, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
+            compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the compile_fts argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
         assert isinstance(dnb2,qmcpy.DigitalNetB2) and dnb2.order=="NATURAL" and dnb2.replications==1 and dnb2.t_lms<64 and dnb2.randomize in ['LMS_DS','DS','LMS','FALSE'], "dnb2 should be a qmcpy.DigitalNetB2 instance with order='NATURAL', replications=1, t_lms<64, and randomize in ['LMS_DS','DS','LMS','FALSE']"
