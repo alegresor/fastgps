@@ -16,7 +16,7 @@ setuptools.setup(
         "qmcpy >= 1.6.2",
         "torch >= 2.0.0",
         "numpy >= 2.0.0",
-        "scipy >= 1.14.0",
+        "scipy >= 1.13.0",
     ],
     classifiers = [
         "Programming Language :: Python :: 3",
