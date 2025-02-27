@@ -153,7 +153,7 @@ class _FastGP(torch.nn.Module):
                 k1parts_next_full = torch.vstack([self.k1parts,self.k1parts_next])
                 k1_next_full = self._kernel_from_parts(k1parts_next_full)
                 lam_next_full_ref = np.sqrt(2*self.n_max)*self.ft(k1_next_full)
-                assert torch.allclose(self._lam_next_full,lam_next_full_ref,rtol=1e-4,atol=0)
+                assert torch.allclose(self._lam_next_full,lam_next_full_ref,atol=1e-7,rtol=0)
         return self._lam_next_full
     def double_n(self):
         """
@@ -173,7 +173,7 @@ class _FastGP(torch.nn.Module):
         if FASTGP_DEBUG=="True":
             assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             ytilde_ref = self.ft(self.y)
-            assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-8,atol=0)
+            assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
         self.lam = self.lam_next_full
         self.coeffs = self.ift(self.ytilde/self.lam).real
         self.x,self._x = self.x_next_full,self._x_next_full
@@ -326,8 +326,8 @@ class _FastGP(torch.nn.Module):
         FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
         if FASTGP_DEBUG=="True":
             assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
-            assert torch.allclose(pcmean,self.y.mean(),atol=1e-3), "pcmean-self.y.mean()"
-            assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3)
+            assert torch.allclose(pcmean,self.y.mean(),atol=1e-3,rtol=0), "pcmean-self.y.mean()"
+            assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3,rtol=0)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean
