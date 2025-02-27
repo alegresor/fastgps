@@ -4,15 +4,20 @@ import numpy as np
 import os 
 import pandas as pd
 
-os.environ["FASTGP_DEBUG"] = "True"
+# import torch._dynamo
+# torch._dynamo.config.suppress_errors = True
+# os.environ["FASTGP_DEBUG"] = "True"
+# os.environ["TORCH_LOGS"] = "+dynamo"
+
+os.environ["TORCHDYNAMO_VERBOSE"] = "1"
 
 import torch
 torch.set_default_dtype(torch.float64)
-device = "cpu"
+device = "cuda"
 
 from matplotlib import pyplot
 import tueplots.bundles
-pyplot.rcParams.update(tueplots.bundles.icml2024())
+#pyplot.rcParams.update(tueplots.bundles.icml2024())
 # pyplot.rcParams.update(tueplots.cycler.cycler(color=tueplots.constants.color.palettes.pn))
 # colors = pyplot.rcParams['axes.prop_cycle'].by_key()['color']
 colors = ["xkcd:"+color[:-1] for color in pd.read_csv("./xkcd_colors.txt",comment="#").iloc[:,0].tolist()][::-1]
@@ -101,8 +106,8 @@ fig,ax = pyplot.subplots(nrows=nrows,ncols=ncols)
 for i in range(3):
     for j in range(2):
         x,y,pmean,ci_low,ci_high = data[i][j]
-        ax[i,j].plot(xticks,yticks,color="k")
-        ax[i,j].scatter(x[:,0],y,color="k")
-        ax[i,j].plot(xticks,pmean,color=colors[j])
-        ax[i,j].fill_between(xticks,ci_low,ci_high,color=colors[j],alpha=_alpha)
+        ax[i,j].plot(xticks.cpu(),yticks.cpu(),color="k")
+        ax[i,j].scatter(x[:,0].cpu(),y.cpu(),color="k")
+        ax[i,j].plot(xticks.cpu(),pmean.cpu(),color=colors[j])
+        ax[i,j].fill_between(xticks.cpu(),ci_low.cpu(),ci_high.cpu(),color=colors[j],alpha=_alpha)
 fig.savefig("example.pdf")
