@@ -29,5 +29,5 @@ jobs:
       - name: Doctests
         shell: bash -l {0}
         run: | 
-          export FASTGP_DEBUG = True
+          export FASTGP_DEBUG=True
           pytest --doctest-modules fastgp/ --disable-pytest-warnings
