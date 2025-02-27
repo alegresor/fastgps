@@ -4,9 +4,16 @@ For full documentation visit [alegresor.github.io/FastGaussianProcesses/](https:
 
 ## API
 
-::: fastgp.fgp
+::: fastgp._fast_gp
     options:
       members:
         - _FastGP
+::: fastgp.fast_gp_lattice
+    options:
+      members:
+        - FastGPLattice
+::: fastgp.fast_gp_lattice
+    options:
+      members:
         - FastGPLattice
         - FastGPDigitalNetB2

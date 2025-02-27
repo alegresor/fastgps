@@ -6,10 +6,10 @@ import pandas as pd
 
 # import torch._dynamo
 # torch._dynamo.config.suppress_errors = True
-# os.environ["FASTGP_DEBUG"] = "True"
 # os.environ["TORCH_LOGS"] = "+dynamo"
+# os.environ["TORCHDYNAMO_VERBOSE"] = "1"
 
-os.environ["TORCHDYNAMO_VERBOSE"] = "1"
+os.environ["FASTGP_DEBUG"] = "True"
 
 import torch
 torch.set_default_dtype(torch.float64)
@@ -44,7 +44,7 @@ print("  n = %d"%n)
 fgp_lattice = fastgp.FastGPLattice(
     f = f_ackley,
     n = n,
-    lattice = qp.Lattice(dimension=d,seed=7),
+    seq = qp.Lattice(dimension=d,seed=7),
     device = device,
     )
 fgp_lattice.fit()
@@ -70,7 +70,7 @@ print("  n = %d"%n)
 fgp_dnb2 = fastgp.FastGPDigitalNetB2(
     f = f_ackley,
     n = n,
-    dnb2 = qp.DigitalNetB2(dimension=1,seed=7),
+    seq = qp.DigitalNetB2(dimension=1,seed=7),
     device = device,
     )
 fgp_dnb2.fit()
