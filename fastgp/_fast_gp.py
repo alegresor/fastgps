@@ -1,9 +1,7 @@
-from .util import optional_requires_grad_func
 import torch 
 import numpy as np 
 import scipy.stats 
 import os
-
 
 class _FastGP(torch.nn.Module):
     def __init__(self,
@@ -74,11 +72,14 @@ class _FastGP(torch.nn.Module):
         self._reset_next()
     def _reset_next(self):
         self.__x_next_ = None 
-        self._x_next_ = None 
+        self._x_next_ = None
+        self.__x_next_full_ = None 
+        self._x_next_full_ = None
         self.raw_scale_next = None 
         self.raw_lengthscales_next = None 
         self.raw_noise_next = None
         self._k1parts_next = None
+        self._k1parts_next_full = None
         self._lam_next_full = None
     @property
     def scale(self):
@@ -108,11 +109,32 @@ class _FastGP(torch.nn.Module):
         if self._x_next_ is None:
             self._x_next_,self.__x_next_ = self._sample(self.n_max,2*self.n_max)
         return self._x_next_
+    @property
+    def _x_next_full(self):
+        if self.__x_next_full_ is None:
+            if self.x.data_ptr()==self._x.data_ptr():
+                self._x_next_full_ = self.__x_next_full_ = torch.vstack([self.x,self.x_next])
+            else:
+                self.__x_next_full_ = torch.vstack([self._x,self._x_next])
+        return self.__x_next_full_
+    @property
+    def x_next_full(self):
+        if self._x_next_full_ is None:
+            if self.x.data_ptr()==self._x.data_ptr():
+                self._x_next_full_ = self.__x_next_full_ = torch.vstack([self.x,self.x_next])
+            else:
+                self._x_next_full_ = torch.vstack([self.x,self.x_next])
+        return self._x_next_full_
     @property 
     def k1parts_next(self):
         if self._k1parts_next is None:
             self._k1parts_next = self._kernel_parts(self._x_next,self._x[None,0,:])
         return self._k1parts_next
+    @property
+    def k1parts_next_full(self):
+        if self._k1parts_next_full is None:
+            self._k1parts_next_full = torch.vstack([self.k1parts,self.k1parts_next])
+        return self._k1parts_next_full
     @property 
     def lam_next_full(self):
         if ((self._lam_next_full is None or self.raw_scale_next is None or self.raw_lengthscales_next is None or self.raw_noise_next is None) or 
@@ -154,12 +176,8 @@ class _FastGP(torch.nn.Module):
             assert torch.allclose(self.ytilde,ytilde_ref,rtol=1e-8,atol=0)
         self.lam = self.lam_next_full
         self.coeffs = self.ift(self.ytilde/self.lam).real
-        if self.x.data_ptr()==self._x.data_ptr():
-            self.x = self._x = torch.vstack([self.x,self.x_next])
-        else:
-            self.x = torch.vstack([self.x,self.x_next])
-            self._x = torch.vstack([self._x,self._x_next])
-        self.k1parts = torch.vstack([self.k1parts,self.k1parts_next])
+        self.x,self._x = self.x_next_full,self._x_next_full
+        self.k1parts = self.k1parts_next_full
         self.n_min = self.n_max 
         self.n_max = 2*self.n_max
         self._double_n_omega()
@@ -170,24 +188,39 @@ class _FastGP(torch.nn.Module):
         return self.scale*(1+self.lengthscales*parts).prod(-1)
     def _kernel_from_delta(self, delta):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
-    def kernel(self, x, z):
+    def kernel(self, x:torch.Tensor, z:torch.Tensor):
+        """
+        Evaluate kernel
+
+        Args:
+            x (torch.Tensor[N,d]): first argument to kernel  
+            z (torch.Tensor[M,d]): second argument to kernel 
+        
+        Returns:
+            kmat (torch.Tensor[N,M]): matrix of kernel evaluations
+        """
         return self._kernel_from_parts(self._kernel_parts(x,z))
-    @optional_requires_grad_func
-    def post_mean(self, x):
+    def post_mean(self, x:torch.Tensor, eval:bool=True):
         """
         Posterior mean. 
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
             pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
         """
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         k = self.kernel(x[:,None,:],self._x[None,:,:])
-        return torch.einsum("il,...l->...i",k,self.coeffs)
-    @optional_requires_grad_func
-    def post_cov(self, x, z):
+        pmean = torch.einsum("il,...l->...i",k,self.coeffs)
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
+        return pmean
+    def post_cov(self, x:torch.Tensor, z:torch.Tensor, future:bool=False, eval:bool=True):
         """
         Posterior covariance. 
         If `torch.equal(x,z)` then the diagonal of the covariance matrix is forced to be non-negative. 
@@ -195,6 +228,8 @@ class _FastGP(torch.nn.Module):
         Args:
             x (torch.Tensor[N,d]): sampling locations
             z (torch.Tensor[M,d]): sampling locations
+            future (bool): If True, get the posterior covariance after doubling the sample size
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
         
         Returns:
             pcov (torch.Tensor[N,M]): posterior covariance matrix
@@ -202,41 +237,54 @@ class _FastGP(torch.nn.Module):
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
         equal = torch.equal(x,z)
+        self__x,self_lam = (self._x_next_full,self.lam_next_full) if future else (self._x,self.lam)
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         k = self.kernel(x[:,None,:],z[None,:,:])
-        k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
-        k2t = k1t if equal else self.ft(self.kernel(z[:,None,:],self._x[None,:,:])) 
-        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/self.lam).real
+        k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
+        k2t = k1t if equal else self.ft(self.kernel(z[:,None,:],self__x[None,:,:])) 
+        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/self_lam).real
         if equal:
             nrange = torch.arange(x.size(0),device=x.device)
             diag = kmat[nrange,nrange]
             diag[diag<0] = 0 
             kmat[nrange,nrange] = diag 
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
         return kmat
-    @optional_requires_grad_func
-    def post_var(self, x):
+    def post_var(self, x:torch.Tensor, future:bool=False, eval:bool=True):
         """
         Posterior variance. Forced to be non-negative.  
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
+            future (bool): If True, get the posterior variance after doubling the sample size
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
 
         Returns:
             pvar (torch.Tensor[N]): posterior variance vector
         """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
+        self__x,self_lam = (self._x_next_full,self.lam_next_full) if future else (self._x,self.lam)
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         k = self.kernel(x,x)
-        k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
-        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self.lam).real
+        k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
+        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self_lam).real
         diag[diag<0] = 0 
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
         return diag
-    @optional_requires_grad_func 
-    def post_ci(self, x, confidence:float=0.99):
+    def post_ci(self, x, confidence:float=0.99, eval:bool=True):
         """
         Posterior credible interval.
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
             confidence (float): confidence level in (0,1) for the credible interval
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
 
         Returns:
             pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
@@ -249,44 +297,66 @@ class _FastGP(torch.nn.Module):
             ci_high (torch.Tensor[*batch_shape,N]): credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
         pmean = self.post_mean(x) 
         pvar = self.post_var(x)
         pstd = torch.sqrt(pvar)
         ci_low = pmean-q*pstd 
-        ci_high = pmean+q*pstd 
+        ci_high = pmean+q*pstd
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
         return pmean,pvar,q,ci_low,ci_high
-    @optional_requires_grad_func
-    def post_cubature_mean(self):
+    def post_cubature_mean(self, eval:bool=True):
         """
         Posterior cubature mean. 
+
+        Args:
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
 
         Returns:
             pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
         """
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         pcmean = self.scale*self.coeffs.sum()
         FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
         if FASTGP_DEBUG=="True":
             assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             assert torch.allclose(pcmean,self.y.mean(),atol=1e-3), "pcmean-self.y.mean()"
             assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3)
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean
-    @optional_requires_grad_func
-    def post_cubature_var(self):
+    def post_cubature_var(self, future:bool=False, eval:bool=True):
         """
         Posterior cubature variance. 
+
+        Args:
+            future (bool): If True, get the posterior cubature variance variance after doubling the sample size
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
 
         Returns:
             pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
         """
-        return self.scale-self.scale**2*self.n_max/self.lam[0].real
-    @optional_requires_grad_func
-    def post_cubature_ci(self, confidence:float=0.99):
+        self_n_max,self_lam = (2*self.n_max,self.lam_next_full) if future else (self.n_max,self.lam)
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
+        pcvar = self.scale-self.scale**2*self_n_max/self_lam[0].real
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
+        return pcvar
+    def post_cubature_ci(self, confidence:float=0.99, eval:bool=True):
         """
         Posterior cubature credible.
 
         Args:
             confidence (float): confidence level in (0,1) for the credible interval
+            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
         
         Returns:
             pcmean (torch.Tensor[*batch_shape]): scalar posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
@@ -298,6 +368,9 @@ class _FastGP(torch.nn.Module):
             cci_low (torch.Tensor[*batch_shape]): scalar credible interval lower bound
             cci_high (torch.Tensor[*batch_shape]): scalar credible interval upper bound
         """
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
         pmean = self.post_cubature_mean() 
@@ -305,6 +378,8 @@ class _FastGP(torch.nn.Module):
         pstd = torch.sqrt(pvar)
         ci_low = pmean-q*pstd 
         ci_high = pmean+q*pstd 
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
         return pmean,pvar,q,ci_low,ci_high
     def fit(self,
         iterations:int = 5000,

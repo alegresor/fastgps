@@ -1,4 +1,4 @@
-site_name: FastGP Docs
+site_name: "FastGP"
 plugins:
   - mkdocstrings:
       #enabled: !ENV [ENABLE_MKDOCSTRINGS, true]

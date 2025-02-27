@@ -70,7 +70,7 @@ class FastGPDigitalNetB2(_FastGP):
         >>> pvar = fgp.post_var(x)
         >>> pvar.shape
         torch.Size([128])
-        >>> assert (pvar>=0).all()
+        >>> assert torch.allclose(pcov.diagonal(),pvar)
 
         >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
         >>> q
@@ -90,10 +90,18 @@ class FastGPDigitalNetB2(_FastGP):
         tensor(20.1564)
         >>> cci_high
         tensor(20.2228)
-
+        
+        >>> pcov_future = fgp.post_cov(x,z,future=True)
+        >>> pvar_future = fgp.post_var(x,future=True)
+        >>> pcvar_future = fgp.post_cubature_var(future=True)
+        
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0258)
+
+        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
+        >>> assert torch.allclose(fgp.post_var(x),pvar_future)
+        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_future)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
