@@ -138,7 +138,7 @@ class FastGPDigitalNetB2(_FastGP):
             ):
         """
         Args:
-            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(...,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
+            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(*batch_size,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
                 ```python
                 f = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1)
                 ```
@@ -153,15 +153,15 @@ class FastGPDigitalNetB2(_FastGP):
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
-            save_y (bool): setting to False will save memory by NOT saving `self.y=f(x)`
+            save_y (bool): setting to `False` will save memory by NOT saving `self.y=f(x)`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
-            compile_fts (bool): if True, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
-            compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the compile_fts argument
+            compile_fts (bool): if `True`, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
+            compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
         if isinstance(seq,int):

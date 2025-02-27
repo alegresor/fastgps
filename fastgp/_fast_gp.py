@@ -206,7 +206,7 @@ class _FastGP(torch.nn.Module):
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()`
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
             pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
@@ -228,8 +228,8 @@ class _FastGP(torch.nn.Module):
         Args:
             x (torch.Tensor[N,d]): sampling locations
             z (torch.Tensor[M,d]): sampling locations
-            future (bool): If True, get the posterior covariance after doubling the sample size
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            future (bool): If `True`, get the posterior covariance after doubling the sample size
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
             pcov (torch.Tensor[N,M]): posterior covariance matrix
@@ -259,8 +259,8 @@ class _FastGP(torch.nn.Module):
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            future (bool): If True, get the posterior variance after doubling the sample size
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            future (bool): If `True`, get the posterior variance after doubling the sample size
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pvar (torch.Tensor[N]): posterior variance vector
@@ -283,13 +283,13 @@ class _FastGP(torch.nn.Module):
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            confidence (float): confidence level in (0,1) for the credible interval
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            confidence (float): confidence level in $(0,1)$ for the credible interval
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
             pvar (torch.Tensor[N]): posterior variance vector
-            q (np.float64): quantile 
+            quantile (np.float64):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
@@ -314,7 +314,7 @@ class _FastGP(torch.nn.Module):
         Posterior cubature mean. 
 
         Args:
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
@@ -336,8 +336,8 @@ class _FastGP(torch.nn.Module):
         Posterior cubature variance. 
 
         Args:
-            future (bool): If True, get the posterior cubature variance variance after doubling the sample size
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            future (bool): If `True`, get the posterior cubature variance variance after doubling the sample size
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
@@ -355,13 +355,13 @@ class _FastGP(torch.nn.Module):
         Posterior cubature credible.
 
         Args:
-            confidence (float): confidence level in (0,1) for the credible interval
-            eval (bool): if True, disable gradients, otherwise use `torch.is_grad_enabled()
+            confidence (float): confidence level in $(0,1)$ for the credible interval
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
-            pcmean (torch.Tensor[*batch_shape]): scalar posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
-            pcvar (torch.Tensor[*batch_shape]): scalar posterior cubature variance with shape (N,)
-            q (np.float64): quantile
+            pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
+            pcvar (torch.Tensor[*batch_shape]): posterior cubature variance
+            quantile (np.float64):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
@@ -397,16 +397,16 @@ class _FastGP(torch.nn.Module):
         """
         Args:
             iterations (int): number of optimization iterations
-            optimizer (torch.optim.Optimizer): optimizer defaulted to torch.optim.Rprop(self.parameters(),lr=lr)
+            optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
             lr (float): learning rate for default optimizer
-            store_mll_hist (bool): it True, store and return iteration data for mll
-            store_scale_hist (bool): it True, store and return iteration data for the kernel scale parameter
-            store_lengthscales_hist (bool): it True, store and return iteration data for the kernel lengthscale parameters
-            store_noise_hist (bool): it True, store and return iteration data for noise
-            verbose (int): log every verbose iterations, set to 0 for silent mode
-            verbose_indent (int): indent to be applied when logging, helpful for logging multiple models
-            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by stop_crit_improvement_threshold for stop_crit_wait_iterations iterations 
-            stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for stop_crit_improvement_threshold
+            store_mll_hist (bool): if `True`, store and return iteration data for mll
+            store_scale_hist (bool): if `True`, store and return iteration data for the kernel scale parameter
+            store_lengthscales_hist (bool): if `True`, store and return iteration data for the kernel lengthscale parameters
+            store_noise_hist (bool): if `True`, store and return iteration data for noise
+            verbose (int): log every `verbose` iterations, set to `0` for silent mode
+            verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
+            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by `stop_crit_improvement_threshold` for `stop_crit_wait_iterations` iterations 
+            stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for `stop_crit_improvement_threshold`
         
         Returns:
             data (dict): iteration data which, dependeing on storage arguments, may include keys in 
