@@ -1,3 +1,5 @@
+from .util import optional_requires_grad_func
+
 import torch 
 import qmcpy as qmcpy
 import numpy as np 
@@ -128,42 +130,32 @@ class _FastGP(torch.nn.Module):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def kernel(self, x, z):
         return self._kernel_from_parts(self._kernel_parts(x,z))
-    def post_mean_grad(self, x):
+    @optional_requires_grad_func
+    def post_mean(self, x):
         """
-        Posterior mean with gradient. 
+        Posterior mean. 
 
         Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
+            x (torch.Tensor[N,d]): sampling locations
         
         Returns:
-            torch.Tensor: posterior mean vector with shape (N,) and requires_grad=True
+            pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
         """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         k = self.kernel(x[:,None,:],self._x[None,:,:])
         return torch.einsum("il,...l->...i",k,self.coeffs)
-    def post_mean(self, x):
+    @optional_requires_grad_func
+    def post_cov(self, x, z):
         """
-        Posterior mean.
+        Posterior covariance. 
+        If `torch.equal(x,z)` then the diagonal of the covariance matrix is forced to be non-negative. 
 
         Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
+            x (torch.Tensor[N,d]): sampling locations
+            z (torch.Tensor[M,d]): sampling locations
         
         Returns:
-            torch.Tensor: posterior mean vector with shape (**batch_shape,N)
-        """
-        with torch.no_grad():
-            return self.post_mean_grad(x)
-    def post_cov_grad(self, x, z):
-        """
-        Posterior covariance with gradient. 
-        If torch.equal(x,z) then the diagonal of the covariance matrix is forced to be non-negative. 
-
-        Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
-            z (torch.Tensor): sampling locations with shape (M,d)
-        
-        Returns:
-            torch.Tensor: posterior covariance matrix with shape (N,M) and requires_grad=True
+            pcov (torch.Tensor[N,M]): posterior covariance matrix
         """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
@@ -178,94 +170,57 @@ class _FastGP(torch.nn.Module):
             diag[diag<0] = 0 
             kmat[nrange,nrange] = diag 
         return kmat
-    def post_cov(self, x, z):
+    @optional_requires_grad_func
+    def post_var(self, x):
         """
-        Posterior covariance. 
-        If torch.equal(x,z) then the diagonal of the covariance matrix is forced to be non-negative. 
+        Posterior variance. Forced to be non-negative.  
 
         Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
-            z (torch.Tensor): sampling locations with shape (M,d)
-        
-        Returns:
-            torch.Tensor: posterior covariance matrix with shape (N,M)
-        """
-        with torch.no_grad():
-            return self.post_cov_grad(x,z)
-    def post_var_grad(self, x):
-        """
-        Posterior variance with gradient. Forced to be non-negative.  
+            x (torch.Tensor[N,d]): sampling locations
 
-        Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
-        
         Returns:
-            torch.Tensor: posterior variance vector with shape (N,) and requires_grad=True
+            pvar (torch.Tensor[N]): posterior variance vector
         """
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         k = self.kernel(x,x)
         k1t = self.ft(self.kernel(x[:,None,:],self._x[None,:,:]))
         diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self.lam).real
         diag[diag<0] = 0 
-        return diag        
-    def post_var(self, x):
-        """
-        Posterior variance. Forced to be non-negative.  
-
-        Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
-        
-        Returns:
-            torch.Tensor: posterior variance vector with shape (N,)
-        """
-        with torch.no_grad():
-            return self.post_var_grad(x)
-    def post_ci_grad(self, x, confidence:float=0.99):
-        """
-        Posterior credible interval with gradients.
-
-        Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
-            confidence (float): confidence level in (0,1) for the credible interval
-        
-        Returns:
-            torch.Tensor: posterior mean with shape (N,) and requires_grad=True
-            torch.Tensor: posterior variance with shape (N,) and requires_grad=True
-            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
-            torch.Tensor: credible interval lower bound with shape (N,) and requires_grad=True
-            torch.Tensor: credible interval upper bound with shape (N,) and requires_grad=True
-        """
-        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
-        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
-        pmean = self.post_mean_grad(x) 
-        pvar = self.post_var_grad(x)
-        pstd = torch.sqrt(pvar)
-        ci_low = pmean-q*pstd 
-        ci_high = pmean+q*pstd 
-        return pmean,pvar,q,ci_low,ci_high
-    def post_ci(self, x, confidence=0.99):
+        return diag
+    @optional_requires_grad_func 
+    def post_ci(self, x, confidence:float=0.99):
         """
         Posterior credible interval.
 
         Args:
-            x (torch.Tensor): sampling locations with shape (N,d)
+            x (torch.Tensor[N,d]): sampling locations
             confidence (float): confidence level in (0,1) for the credible interval
-        
-        Returns:
-            torch.Tensor: posterior mean with shape (N,)
-            torch.Tensor: posterior variance with shape (N,)
-            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
-            torch.Tensor: credible interval lower bound with shape (N,)
-            torch.Tensor: credible interval upper bound with shape (N,)
-        """
-        with torch.no_grad():
-            return self.post_ci_grad(x,confidence=confidence)
-    def post_cubature_mean_grad(self):
-        """
-        Posterior cubature mean with gradient. 
 
         Returns:
-            torch.Tensor: a scalar posterior cubature mean with requires_grad=True
+            pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
+            pvar (torch.Tensor[N]): posterior variance vector
+            q (np.float64): quantile 
+                ```python
+                scipy.stats.norm.ppf(1-(1-confidence)/2)
+                ```
+            ci_low (torch.Tensor[*batch_shape,N]): credible interval lower bound
+            ci_high (torch.Tensor[*batch_shape,N]): credible interval upper bound
+        """
+        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
+        pmean = self.post_mean(x) 
+        pvar = self.post_var(x)
+        pstd = torch.sqrt(pvar)
+        ci_low = pmean-q*pstd 
+        ci_high = pmean+q*pstd 
+        return pmean,pvar,q,ci_low,ci_high
+    @optional_requires_grad_func
+    def post_cubature_mean(self):
+        """
+        Posterior cubature mean. 
+
+        Returns:
+            pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
         """
         pcmean = self.scale*self.coeffs.sum()
         FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
@@ -274,70 +229,41 @@ class _FastGP(torch.nn.Module):
             assert torch.allclose(pcmean,self.y.mean(),atol=1e-3), "pcmean-self.y.mean()"
             assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3)
         return pcmean
-    def post_cubature_mean(self):
-        """
-        Posterior cubature mean.
-
-        Returns:
-            torch.Tensor: a scalar posterior cubature mean
-        """
-        with torch.no_grad():
-            return self.post_cubature_mean_grad()
-    def post_cubature_var_grad(self):
-        """
-        Posterior cubature variance with gradient. 
-
-        Returns:
-            torch.Tensor: a scalar posterior cubature variance with requires_grad=True
-        """
-        return self.scale-self.scale**2*self.n_max/self.lam[0].real
+    @optional_requires_grad_func
     def post_cubature_var(self):
         """
-        Posterior cubature variance.
+        Posterior cubature variance. 
 
         Returns:
-            torch.Tensor: a scalar posterior cubature variance 
+            pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
         """
-        with torch.no_grad():
-            return self.post_cubature_var_grad()
-    def post_cubature_ci_grad(self, confidence:float=0.99):
+        return self.scale-self.scale**2*self.n_max/self.lam[0].real
+    @optional_requires_grad_func
+    def post_cubature_ci(self, confidence:float=0.99):
         """
-        Posterior cubature credible interval with gradients.
+        Posterior cubature credible.
 
         Args:
             confidence (float): confidence level in (0,1) for the credible interval
         
         Returns:
-            torch.Tensor: scalar posterior cubature mean with requires_grad=True
-            torch.Tensor: scalar posterior cubature variance with shape (N,) and requires_grad=True
-            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
-            torch.Tensor: scalar credible interval lower bound with  requires_grad=True
-            torch.Tensor: scalar credible interval upper bound with requires_grad=True
+            pcmean (torch.Tensor[*batch_shape]): scalar posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
+            pcvar (torch.Tensor[*batch_shape]): scalar posterior cubature variance with shape (N,)
+            q (np.float64): quantile
+                ```python
+                scipy.stats.norm.ppf(1-(1-confidence)/2)
+                ```
+            cci_low (torch.Tensor[*batch_shape]): scalar credible interval lower bound
+            cci_high (torch.Tensor[*batch_shape]): scalar credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
         pmean = self.post_cubature_mean() 
-        pvar = self.post_cubature_var_grad()
+        pvar = self.post_cubature_var()
         pstd = torch.sqrt(pvar)
         ci_low = pmean-q*pstd 
         ci_high = pmean+q*pstd 
         return pmean,pvar,q,ci_low,ci_high
-    def post_cubature_ci(self, confidence:float=0.99):
-        """
-        Posterior cubature credible interval with gradients.
-
-        Args:
-            confidence (float): confidence level in (0,1) for the credible interval
-        
-        Returns:
-            torch.Tensor: scalar posterior cubature mean with requires_grad=True
-            torch.Tensor: scalar posterior cubature variance with shape (N,) and requires_grad=True
-            np.float64: quantile scipy.stats.norm.ppf(1-(1-confidence)/2)
-            torch.Tensor: scalar credible interval lower bound with  requires_grad=True
-            torch.Tensor: scalar credible interval upper bound with requires_grad=True
-        """
-        with torch.no_grad():
-            return self.post_cubature_ci_grad(confidence=confidence)
     def fit(self,
         iterations:int = 5000,
         optimizer:torch.optim.Optimizer = None,
@@ -366,7 +292,10 @@ class _FastGP(torch.nn.Module):
             stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for stop_crit_improvement_threshold
         
         Returns:
-            dict: iteration data, may include keys in ['mll_hist','scale_hist','lengthscales_hist',noise_hist'] dependeing on storage arguments
+            data (dict): iteration data which, dependeing on storage arguments, may include keys in 
+                ```python
+                ["mll_hist","scale_hist","lengthscales_hist","noise_hist"]
+                ```
         """
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
@@ -542,10 +471,10 @@ class FastGPLattice(_FastGP):
         >>> fgp.post_cubature_var()
         tensor(3.0169e-06)
 
-        >>> pcmean,pcvar,q,pci_low,pci_high = fgp.post_cubature_ci(confidence=0.99)
-        >>> pci_low
+        >>> pcmean,pcvar,q,cci_low,cci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> cci_low
         tensor(20.1797)
-        >>> pci_high
+        >>> cci_high
         tensor(20.1887)
 
         >>> fgp.double_n()
@@ -600,7 +529,7 @@ class FastGPLattice(_FastGP):
             n (int): number of lattice points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
-            lengthscales (torch.Tensor): length d vector of kernel lengthscales
+            lengthscales (torch.Tensor[d]): vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
             save_y (bool): setting to False will save memory by NOT saving `self.y=f(x)`
@@ -736,10 +665,10 @@ class FastGPDigitalNetB2(_FastGP):
         >>> fgp.post_cubature_var()
         tensor(0.0002)
 
-        >>> pcmean,pcvar,q,pci_low,pci_high = fgp.post_cubature_ci(confidence=0.99)
-        >>> pci_low
+        >>> pcmean,pcvar,q,cci_low,cci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> cci_low
         tensor(20.1564)
-        >>> pci_high
+        >>> cci_high
         tensor(20.2228)
 
         >>> fgp.double_n()
@@ -794,7 +723,7 @@ class FastGPDigitalNetB2(_FastGP):
             n (int): number of lattice points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
-            lengthscales (torch.Tensor): length d vector of kernel lengthscales
+            lengthscales (torch.Tensor[d]): vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
             save_y (bool): setting to False will save memory by NOT saving `self.y=f(x)`
