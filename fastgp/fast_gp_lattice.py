@@ -145,7 +145,6 @@ class FastGPLattice(_FastGP):
             lengthscales:torch.Tensor = 1, 
             noise:float = 1e-8, 
             device:torch.device = "cpu",
-            save_y:bool = True,
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -172,7 +171,6 @@ class FastGPLattice(_FastGP):
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
-            save_y (bool): setting to `False` will save memory by NOT saving `self.y=f(x)`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
@@ -197,7 +195,6 @@ class FastGPLattice(_FastGP):
             scale,
             lengthscales,
             noise,device,
-            save_y,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -207,10 +204,8 @@ class FastGPLattice(_FastGP):
             ft,
             ift,
         )
-        self.omega = torch.exp(-torch.pi*1j*torch.arange(self.n_max,device=self.device)/self.n_max)
-    def _double_n_omega(self):
-        omega_new = torch.exp(-torch.pi*1j*(2*torch.arange(self.n_min,device=self.device)+1)/self.n_max)
-        self.omega = torch.vstack([self.omega,omega_new]).T.flatten()
+    def get_omega(self, m):
+        return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
     def _sample(self, n_min, n_max):
         x = torch.from_numpy(self.seq.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
         return x,x
