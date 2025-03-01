@@ -95,25 +95,25 @@ pmean_dnb2_4n,pstd_dnb2_4n,q,ci_low_dnb2_4n,ci_high_dnb2_4n = fgp_dnb2.post_ci(x
 x_dnb2_4n,y_dnb2_4n = fgp_dnb2.x.clone(),fgp_dnb2.y.clone()
 print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_dnb2.post_cubature_var(),fgp_dnb2.post_cubature_var(future=True)))
 
-# print("collecting data and plotting")
-# data = [
-#     [   (x_lattice_n,y_lattice_n,pmean_lattice_n,ci_low_lattice_n,ci_high_lattice_n),
-#         (x_dnb2_n,y_dnb2_n,pmean_dnb2_n,ci_low_dnb2_n,ci_high_dnb2_n)],
-#     [   (x_lattice_2n,y_lattice_2n,pmean_lattice_2n,ci_low_lattice_2n,ci_high_lattice_2n),
-#         (x_dnb2_2n,y_dnb2_2n,pmean_dnb2_2n,ci_low_dnb2_2n,ci_high_dnb2_2n)],
-#     [   (x_lattice_4n,y_lattice_4n,pmean_lattice_4n,ci_low_lattice_4n,ci_high_lattice_4n),
-#         (x_dnb2_4n,y_dnb2_4n,pmean_dnb2_4n,ci_low_dnb2_4n,ci_high_dnb2_4n)],
-# ]
-# nrows = 3
-# ncols = 2
-# _alpha = 0.25
-# pyplot.rcParams.update(tueplots.figsizes.icml2024_full(nrows=nrows,ncols=ncols))
-# fig,ax = pyplot.subplots(nrows=nrows,ncols=ncols)
-# for i in range(3):
-#     for j in range(2):
-#         x,y,pmean,ci_low,ci_high = data[i][j]
-#         ax[i,j].plot(xticks.cpu(),yticks.cpu(),color="k")
-#         ax[i,j].scatter(x[:,0].cpu(),y.cpu(),color="k")
-#         ax[i,j].plot(xticks.cpu(),pmean.cpu(),color=colors[j])
-#         ax[i,j].fill_between(xticks.cpu(),ci_low.cpu(),ci_high.cpu(),color=colors[j],alpha=_alpha)
-# fig.savefig("example.pdf")
+print("collecting data and plotting")
+data = [
+    [   (x_lattice_n,y_lattice_n,pmean_lattice_n,ci_low_lattice_n,ci_high_lattice_n),
+        (x_dnb2_n,y_dnb2_n,pmean_dnb2_n,ci_low_dnb2_n,ci_high_dnb2_n)],
+    [   (x_lattice_2n,y_lattice_2n,pmean_lattice_2n,ci_low_lattice_2n,ci_high_lattice_2n),
+        (x_dnb2_2n,y_dnb2_2n,pmean_dnb2_2n,ci_low_dnb2_2n,ci_high_dnb2_2n)],
+    [   (x_lattice_4n,y_lattice_4n,pmean_lattice_4n,ci_low_lattice_4n,ci_high_lattice_4n),
+        (x_dnb2_4n,y_dnb2_4n,pmean_dnb2_4n,ci_low_dnb2_4n,ci_high_dnb2_4n)],
+]
+nrows = 3
+ncols = 2
+_alpha = 0.25
+pyplot.rcParams.update(tueplots.figsizes.icml2024_full(nrows=nrows,ncols=ncols))
+fig,ax = pyplot.subplots(nrows=nrows,ncols=ncols)
+for i in range(3):
+    for j in range(2):
+        x,y,pmean,ci_low,ci_high = data[i][j]
+        ax[i,j].plot(xticks.cpu(),yticks.cpu(),color="k")
+        ax[i,j].scatter(x[:,0].cpu(),y.cpu(),color="k")
+        ax[i,j].plot(xticks.cpu(),pmean.cpu(),color=colors[j])
+        ax[i,j].fill_between(xticks.cpu(),ci_low.cpu(),ci_high.cpu(),color=colors[j],alpha=_alpha)
+fig.savefig("example.pdf")

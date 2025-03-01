@@ -175,7 +175,6 @@ class FastGPDigitalNetB2(_FastGP):
             scale,
             lengthscales,
             noise,device,
-            save_y,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -185,7 +184,7 @@ class FastGPDigitalNetB2(_FastGP):
             ft,
             ift,
         )
-    def get_omega(self):
+    def get_omega(self, m):
         return 1
     def _sample(self, n_min, n_max):
         _x = torch.from_numpy(self.seq.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
