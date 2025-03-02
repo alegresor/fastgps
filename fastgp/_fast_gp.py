@@ -397,8 +397,8 @@ class _FastGP(torch.nn.Module):
         Posterior cubature variance. 
 
         Args:
-            future (bool): If `True`, get the posterior cubature variance variance after doubling the sample size
             n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
