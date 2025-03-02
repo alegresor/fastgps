@@ -226,6 +226,16 @@ class _FastGP(torch.nn.Module):
         y_next = self.f(x_next)
         self.y = torch.cat([self.y,y_next],-1)
         self.lam_caches.pop_first()
+    def add_n(self, n:int):
+        """
+        Increase the sample size to `n`. 
+
+        Args:
+            n (int): number of points to increase the sample size to
+        """ 
+        assert isinstance(n,int) and n>=self.n_max and n&(n-1)==0, "n must be power of 2 greater than or equal to self.n_max"
+        while n!=self.n_max:
+            self.double_n()
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):

@@ -135,6 +135,14 @@ class FastGPLattice(_FastGP):
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0275)
+
+        >>> pcov_8n = fgp.post_cov(x,z,n=8*fgp.n_max)
+        >>> pvar_8n = fgp.post_var(x,n=8*fgp.n_max)
+        >>> pcvar_8n = fgp.post_cubature_var(n=8*fgp.n_max)
+        >>> fgp.add_n(n=8*fgp.n_max)
+        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_8n)
+        >>> assert torch.allclose(fgp.post_var(x),pvar_8n)
+        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_8n)
     """
     def __init__(self,
             f:callable,
