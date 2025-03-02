@@ -91,9 +91,9 @@ class FastGPDigitalNetB2(_FastGP):
         >>> cci_high
         tensor(20.2228)
         
-        >>> pcov_future = fgp.post_cov(x,z,future=True)
-        >>> pvar_future = fgp.post_var(x,future=True)
-        >>> pcvar_future = fgp.post_cubature_var(future=True)
+        >>> pcov_future = fgp.post_cov(x,z,n=2*fgp.n_max)
+        >>> pvar_future = fgp.post_var(x,n=2*fgp.n_max)
+        >>> pcvar_future = fgp.post_cubature_var(n=2*fgp.n_max)
         
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
@@ -116,6 +116,14 @@ class FastGPDigitalNetB2(_FastGP):
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0187)
+
+        >>> pcov_8n = fgp.post_cov(x,z,n=8*fgp.n_max)
+        >>> pvar_8n = fgp.post_var(x,n=8*fgp.n_max)
+        >>> pcvar_8n = fgp.post_cubature_var(n=8*fgp.n_max)
+        >>> fgp.add_n(n=8*fgp.n_max)
+        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_8n)
+        >>> assert torch.allclose(fgp.post_var(x),pvar_8n)
+        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_8n)
     """
     def __init__(self,
             f:callable,
@@ -126,7 +134,6 @@ class FastGPDigitalNetB2(_FastGP):
             lengthscales:torch.Tensor = 1, 
             noise:float = 1e-16, 
             device:torch.device = "cpu",
-            save_y:bool = True,
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -153,7 +160,6 @@ class FastGPDigitalNetB2(_FastGP):
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
             noise (float): positive noise variance i.e. nugget term
             device (torch.device): torch device which is required to support torch.float64
-            save_y (bool): setting to `False` will save memory by NOT saving `self.y=f(x)`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
@@ -177,7 +183,6 @@ class FastGPDigitalNetB2(_FastGP):
             scale,
             lengthscales,
             noise,device,
-            save_y,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
@@ -187,10 +192,8 @@ class FastGPDigitalNetB2(_FastGP):
             ft,
             ift,
         )
-        self.omega = torch.ones(self.n_max,device=self.device)
-    def _double_n_omega(self):
-        omega_new = torch.ones(self.n_min,device=self.device)
-        self.omega = torch.vstack([self.omega,omega_new]).T.flatten()
+    def get_omega(self, m):
+        return 1
     def _sample(self, n_min, n_max):
         _x = torch.from_numpy(self.seq.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
         x = self._convert_from_b(_x)

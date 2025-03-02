@@ -3,6 +3,130 @@ import numpy as np
 import scipy.stats 
 import os
 
+class _XXbSeq(object):
+    def __init__(self, fgp):
+        self.fgp = fgp
+        assert self.fgp.n_min==0
+        x,xb = self.fgp._sample(0,self.fgp.n_max)
+        self.x,self.xb = (x,x) if x.data_ptr()==xb.data_ptr() else (x,xb)
+        self.n_max = self.fgp.n_max
+    def __getitem__(self, i):
+        if isinstance(i,int): i = slice(None,i,None) 
+        assert isinstance(i,slice)
+        if i.stop>self.n_max:
+            x_next,xb_next = self.fgp._sample(self.n_max,i.stop)
+            if x_next.data_ptr()==xb_next.data_ptr():
+                self.x = self.xb = torch.vstack([self.x,x_next])
+            else:
+                self.x = torch.vstack([self.x,x_next])
+                self.xb = torch.vstack([self.xb,xb_next])
+            self.n_max = i.stop
+        return self.x[i],self.xb[i]
+
+class _K1PartsSeq(object):
+    def __init__(self, fgp):
+        self.fgp = fgp
+        self.k1parts = self.fgp._kernel_parts(self.fgp.xb,self.fgp.xb[None,0,:])
+        self.n_max = self.fgp.n_max
+    def __getitem__(self, i):
+        if isinstance(i,int): i = slice(None,i,None) 
+        assert isinstance(i,slice)
+        if i.stop>self.n_max:
+            _,xb0 = self.fgp.xxb_seq[:1]
+            _,xb_next = self.fgp.xxb_seq[self.n_max:i.stop]
+            k1parts_next = self.fgp._kernel_parts(xb_next,xb0)
+            self.k1parts = torch.vstack([self.k1parts,k1parts_next])
+            self.n_max = i.stop
+        return self.k1parts[i]
+
+class _LamCaches(object):
+    def __init__(self, fgp):
+        self.fgp = fgp
+        k1 = self.fgp._kernel_from_parts(self.fgp.k1parts)
+        k1[0] += self.fgp.noise
+        self.lam_list = [np.sqrt(self.fgp.n_max)*self.fgp.ft(k1)]
+        self.raw_scale_freeze_list = [self.fgp.raw_scale.clone()]
+        self.raw_lengthscales_freeze_list = [self.fgp.raw_lengthscales.clone()]
+        self.raw_noise_freeze_list = [self.fgp.raw_noise.clone()]
+        self.m_min = self.m_max = int(np.log2(self.fgp.n_max))
+    def __getitem__(self, m):
+        assert isinstance(m,int)
+        assert m>=self.m_min, "old lambda are not retained after updating"
+        if m==self.m_min:
+            if not torch.equal(self.raw_scale_freeze_list[0],self.fgp.raw_scale) or not torch.equal(self.raw_lengthscales_freeze_list[0],self.fgp.raw_lengthscales) or not torch.equal(self.raw_noise_freeze_list[0],self.fgp.raw_noise):
+                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[:2**self.m_min])
+                k1[0] += self.fgp.noise
+                self.lam_list[0] = np.sqrt(2**self.m_min)*self.fgp.ft(k1)
+            return self.lam_list[0]
+        if m>self.m_max:
+            self.lam_list += [torch.empty(2**mm,dtype=self.lam_list[0].dtype) for mm in range(self.m_max+1,m+1)]
+            self.raw_scale_freeze_list += [torch.empty_like(self.raw_scale_freeze_list[0])]*(m-self.m_max)
+            self.raw_lengthscales_freeze_list += [torch.empty_like(self.raw_lengthscales_freeze_list[0])]*(m-self.m_max)
+            self.raw_noise_freeze_list += [torch.empty_like(self.raw_noise_freeze_list[0])]*(m-self.m_max)
+            self.m_max = m
+        midx = m-self.m_min
+        if not torch.equal(self.raw_scale_freeze_list[midx],self.fgp.raw_scale) or not torch.equal(self.raw_lengthscales_freeze_list[midx],self.fgp.raw_lengthscales) or not torch.equal(self.raw_noise_freeze_list[midx],self.fgp.raw_noise):
+                omega_m = self.fgp.get_omega(m-1)
+                k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[2**(m-1):2**m])
+                lam_m = np.sqrt(2**(m-1))*self.fgp.ft(k1_m)
+                omega_lam_m = omega_m*lam_m
+                lam_m_prev = self[m-1]
+                self.lam_list[midx] = torch.hstack([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m])
+                FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+                if FASTGP_DEBUG=="True":
+                    k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[:2**m])
+                    lam_full = np.sqrt(2**m)*self.fgp.ft(k1_full)
+                    assert torch.allclose(self.lam_list[midx],lam_full,atol=1e-7,rtol=0)
+                self.raw_scale_freeze_list[midx] = self.fgp.raw_scale.clone()
+                self.raw_lengthscales_freeze_list[midx] = self.fgp.raw_lengthscales.clone()
+                self.raw_noise_freeze_list[midx] = self.fgp.raw_noise.clone()
+        return self.lam_list[midx]
+    def pop_first(self):
+        self[self.m_min+1]
+        del self.lam_list[0]
+        del self.raw_scale_freeze_list[0]
+        del self.raw_lengthscales_freeze_list[0]
+        del self.raw_noise_freeze_list[0]
+        self.m_min += 1
+    def insert_first_level(self, lam):
+        self.lam_list[0] = lam 
+        self.raw_scale_freeze_list[0] = self.fgp.raw_scale.clone()
+        self.raw_lengthscales_freeze_list[0] = self.fgp.raw_lengthscales.clone()
+        self.raw_noise_freeze_list[0] = self.fgp.raw_noise.clone()
+
+class _CoeffsCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp 
+        self.raw_scale_freeze = self.fgp.raw_scale.clone()
+        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
+        self.raw_noise_freeze = self.fgp.raw_noise.clone()
+        self.coeffs = self.fgp.ift(self.fgp.ytilde/self.fgp.lam).real 
+    def __call__(self):
+        if self.coeffs.shape!=self.fgp.y.shape or (self.fgp.raw_scale!=self.raw_scale_freeze).any() or (self.fgp.raw_lengthscales!=self.raw_lengthscales_freeze).any() or (self.fgp.raw_noise!=self.raw_noise_freeze).any():
+            self.coeffs = self.fgp.ift(self.fgp.ytilde/self.fgp.lam).real
+            self.raw_scale_freeze = self.fgp.raw_scale.clone()
+            self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
+            self.raw_noise_freeze = self.fgp.raw_noise.clone()
+        return self.coeffs 
+
+class _YtildeCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp
+        self.ytilde = self.fgp.ft(self.fgp.y)
+    def __call__(self):
+        while self.fgp.y.shape!=self.ytilde.shape:
+            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+            ytilde_next = self.fgp.ft(self.fgp.y[...,self.ytilde.size(-1):(2*self.ytilde.size(-1))])
+            omega_m = self.fgp.get_omega(int(np.log2(self.ytilde.size(-1))))
+            omega_ytilde_next = omega_m*ytilde_next
+            self.ytilde = 1/np.sqrt(2)*torch.hstack([
+                self.ytilde+omega_ytilde_next,
+                self.ytilde-omega_ytilde_next])
+            if FASTGP_DEBUG=="True":
+                ytilde_ref = self.fgp.ft(self.fgp.y[:(2*self.ytilde.size(-1))])
+                assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
+        return self.ytilde 
+
 class _FastGP(torch.nn.Module):
     def __init__(self,
         f,
@@ -13,7 +137,6 @@ class _FastGP(torch.nn.Module):
         lengthscales,
         noise,
         device,
-        save_y,
         tfs_scale,
         tfs_lengthscales,
         tfs_noise,
@@ -55,32 +178,35 @@ class _FastGP(torch.nn.Module):
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
         self.ft = ft 
         self.ift = ift
-        self.save_y = save_y
-        self.x,self._x = self._sample(self.n_min,self.n_max)
-        y = self.f(self.x)
-        assert y.size(-1)==self.n_max
-        self.d_out = y.numel()/self.n_max
-        self.y_shape = list(y.shape)
-        self.ytilde = self.ft(y)
-        self.k1parts = self._kernel_parts(self._x,self._x[None,0,:])
-        k1 = self._kernel_from_parts(self.k1parts)
-        k1[0] += self.noise
-        self.lam = np.sqrt(self.n_max)*self.ft(k1)
-        self.coeffs = self.ift(self.ytilde/self.lam).real
-        if self.save_y: 
-            self.y = y
-        self._reset_next()
-    def _reset_next(self):
-        self.__x_next_ = None 
-        self._x_next_ = None
-        self.__x_next_full_ = None 
-        self._x_next_full_ = None
-        self.raw_scale_next = None 
-        self.raw_lengthscales_next = None 
-        self.raw_noise_next = None
-        self._k1parts_next = None
-        self._k1parts_next_full = None
-        self._lam_next_full = None
+        self.xxb_seq = _XXbSeq(self)
+        x,xb = self.xxb_seq[:self.n_max]
+        self.y = self.f(x)
+        assert self.y.size(-1)==self.n_max
+        self.d_out = self.y.numel()/self.n_max
+        self.k1parts_seq = _K1PartsSeq(self)
+        self.lam_caches = _LamCaches(self)
+        self.ytilde_cache = _YtildeCache(self)
+        self.coeffs_cache = _CoeffsCache(self)
+    @property
+    def lam(self):
+        return self.lam_caches[int(np.log2(self.n_max))] 
+    @property
+    def x(self):
+        x,xb = self.xxb_seq[:self.n_max]
+        return x
+    @property
+    def xb(self):
+        x,xb = self.xxb_seq[:self.n_max]
+        return xb
+    @property
+    def k1parts(self):
+        return self.k1parts_seq.k1parts
+    @property
+    def ytilde(self):
+        return self.ytilde_cache()
+    @property
+    def coeffs(self):
+        return self.coeffs_cache()
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -90,98 +216,26 @@ class _FastGP(torch.nn.Module):
     @property
     def noise(self):
         return self.tf_noise(self.raw_noise)
-    @property
-    def scale_next(self):
-        return self.tf_scale(self.raw_scale_next)
-    @property
-    def lengthscales_next(self):
-        return self.tf_lengthscales(self.raw_lengthscales_next)
-    @property
-    def noise_next(self):
-        return self.tf_noise(self.raw_noise_next)
-    @property
-    def _x_next(self):
-        if self.__x_next_ is None:
-            self._x_next_,self.__x_next_ = self._sample(self.n_max,2*self.n_max)
-        return self.__x_next_
-    @property
-    def x_next(self):
-        if self._x_next_ is None:
-            self._x_next_,self.__x_next_ = self._sample(self.n_max,2*self.n_max)
-        return self._x_next_
-    @property
-    def _x_next_full(self):
-        if self.__x_next_full_ is None:
-            if self.x.data_ptr()==self._x.data_ptr():
-                self._x_next_full_ = self.__x_next_full_ = torch.vstack([self.x,self.x_next])
-            else:
-                self.__x_next_full_ = torch.vstack([self._x,self._x_next])
-        return self.__x_next_full_
-    @property
-    def x_next_full(self):
-        if self._x_next_full_ is None:
-            if self.x.data_ptr()==self._x.data_ptr():
-                self._x_next_full_ = self.__x_next_full_ = torch.vstack([self.x,self.x_next])
-            else:
-                self._x_next_full_ = torch.vstack([self.x,self.x_next])
-        return self._x_next_full_
-    @property 
-    def k1parts_next(self):
-        if self._k1parts_next is None:
-            self._k1parts_next = self._kernel_parts(self._x_next,self._x[None,0,:])
-        return self._k1parts_next
-    @property
-    def k1parts_next_full(self):
-        if self._k1parts_next_full is None:
-            self._k1parts_next_full = torch.vstack([self.k1parts,self.k1parts_next])
-        return self._k1parts_next_full
-    @property 
-    def lam_next_full(self):
-        if ((self._lam_next_full is None or self.raw_scale_next is None or self.raw_lengthscales_next is None or self.raw_noise_next is None) or 
-            ((self.raw_scale_next!=self.raw_scale).any() or (self.raw_lengthscales_next!=self.raw_lengthscales).any() or (self.raw_noise!=self.raw_noise_next).any())):
-            self.raw_scale_next = self.raw_scale.clone()
-            self.raw_lengthscales_next = self.raw_lengthscales.clone()
-            self.raw_noise_next = self.raw_noise.clone()
-            k1_next = self._kernel_from_parts(self.k1parts_next)
-            lam_next = np.sqrt(self.n_max)*self.ft(k1_next)
-            omega_lam_next = self.omega*lam_next
-            self._lam_next_full = torch.hstack([
-                self.lam+omega_lam_next,
-                self.lam-omega_lam_next])
-            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-            if FASTGP_DEBUG=="True":
-                k1parts_next_full = torch.vstack([self.k1parts,self.k1parts_next])
-                k1_next_full = self._kernel_from_parts(k1parts_next_full)
-                lam_next_full_ref = np.sqrt(2*self.n_max)*self.ft(k1_next_full)
-                assert torch.allclose(self._lam_next_full,lam_next_full_ref,atol=1e-7,rtol=0)
-        return self._lam_next_full
     def double_n(self):
         """
         Double the sample size `n` and perform efficient updates.
         """
-        y_next = self.f(self.x_next)
-        assert list(y_next.shape)==self.y_shape
-        self.y_shape[-1] *= 2
-        if self.save_y:
-            self.y = torch.cat([self.y,y_next],-1)
-        ytilde_next = self.ft(y_next)
-        omega_ytilde_next = self.omega*ytilde_next
-        self.ytilde = 1/np.sqrt(2)*torch.hstack([
-            self.ytilde+omega_ytilde_next,
-            self.ytilde-omega_ytilde_next])
-        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-        if FASTGP_DEBUG=="True":
-            assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
-            ytilde_ref = self.ft(self.y)
-            assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
-        self.lam = self.lam_next_full
-        self.coeffs = self.ift(self.ytilde/self.lam).real
-        self.x,self._x = self.x_next_full,self._x_next_full
-        self.k1parts = self.k1parts_next_full
         self.n_min = self.n_max 
-        self.n_max = 2*self.n_max
-        self._double_n_omega()
-        self._reset_next()
+        self.n_max = 2*self.n_min
+        x_next,xb_next = self.xxb_seq[self.n_min:self.n_max]
+        y_next = self.f(x_next)
+        self.y = torch.cat([self.y,y_next],-1)
+        self.lam_caches.pop_first()
+    def add_n(self, n:int):
+        """
+        Increase the sample size to `n`. 
+
+        Args:
+            n (int): number of points to increase the sample size to
+        """ 
+        assert isinstance(n,int) and n>=self.n_max and n&(n-1)==0, "n must be power of 2 greater than or equal to self.n_max"
+        while n!=self.n_max:
+            self.double_n()
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
@@ -215,12 +269,12 @@ class _FastGP(torch.nn.Module):
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        k = self.kernel(x[:,None,:],self._x[None,:,:])
+        k = self.kernel(x[:,None,:],self.xb[None,:self.n_max,:])
         pmean = torch.einsum("il,...l->...i",k,self.coeffs)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean
-    def post_cov(self, x:torch.Tensor, z:torch.Tensor, future:bool=False, eval:bool=True):
+    def post_cov(self, x:torch.Tensor, z:torch.Tensor, n:int=None, eval:bool=True):
         """
         Posterior covariance. 
         If `torch.equal(x,z)` then the diagonal of the covariance matrix is forced to be non-negative. 
@@ -228,23 +282,27 @@ class _FastGP(torch.nn.Module):
         Args:
             x (torch.Tensor[N,d]): sampling locations
             z (torch.Tensor[M,d]): sampling locations
-            future (bool): If `True`, get the posterior covariance after doubling the sample size
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
             pcov (torch.Tensor[N,M]): posterior covariance matrix
         """
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
         equal = torch.equal(x,z)
-        self__x,self_lam = (self._x_next_full,self.lam_next_full) if future else (self._x,self.lam)
+        _,self__x = self.xxb_seq[:2**m]
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         k = self.kernel(x[:,None,:],z[None,:,:])
         k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
         k2t = k1t if equal else self.ft(self.kernel(z[:,None,:],self__x[None,:,:])) 
-        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/self_lam).real
+        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/lam).real
         if equal:
             nrange = torch.arange(x.size(0),device=x.device)
             diag = kmat[nrange,nrange]
@@ -253,26 +311,30 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return kmat
-    def post_var(self, x:torch.Tensor, future:bool=False, eval:bool=True):
+    def post_var(self, x:torch.Tensor, n:int=None, eval:bool=True):
         """
         Posterior variance. Forced to be non-negative.  
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            future (bool): If `True`, get the posterior variance after doubling the sample size
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pvar (torch.Tensor[N]): posterior variance vector
         """
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        self__x,self_lam = (self._x_next_full,self.lam_next_full) if future else (self._x,self.lam)
+        _,self__x = self.xxb_seq[:2**m]
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         k = self.kernel(x,x)
         k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
-        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self_lam).real
+        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/lam).real
         diag[diag<0] = 0 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -325,28 +387,30 @@ class _FastGP(torch.nn.Module):
         pcmean = self.scale*self.coeffs.sum()
         FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
         if FASTGP_DEBUG=="True":
-            assert self.save_y, "os.environ['FASTGP_DEBUG']='True' requires save_y=True"
             assert torch.allclose(pcmean,self.y.mean(),atol=1e-3,rtol=0), "pcmean-self.y.mean()"
             assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n_max),atol=1e-3,rtol=0)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean
-    def post_cubature_var(self, future:bool=False, eval:bool=True):
+    def post_cubature_var(self, n:int=None, eval:bool=True):
         """
         Posterior cubature variance. 
 
         Args:
-            future (bool): If `True`, get the posterior cubature variance variance after doubling the sample size
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
         """
-        self_n_max,self_lam = (2*self.n_max,self.lam_next_full) if future else (self.n_max,self.lam)
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
-        pcvar = self.scale-self.scale**2*self_n_max/self_lam[0].real
+        pcvar = self.scale-self.scale**2*n/lam[0].real
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar
@@ -446,8 +510,10 @@ class _FastGP(torch.nn.Module):
         stop_crit_best_mll = torch.inf 
         stop_crit_save_mll = torch.inf 
         stop_crit_iterations_without_improvement_mll = 0
+        k1parts = self.k1parts[:self.n_max]
+        absytilde2 = torch.abs(self.ytilde)**2
         for i in range(iterations+1):
-            mll = (torch.abs(self.ytilde)**2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
+            mll = (absytilde2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
             if mll.item()<stop_crit_save_mll*(1-stop_crit_improvement_threshold):
@@ -473,10 +539,10 @@ class _FastGP(torch.nn.Module):
             mll.backward()
             optimizer.step()
             optimizer.zero_grad()
-            k1 = self._kernel_from_parts(self.k1parts)
-            k1[0] += self.noise
-            self.lam = np.sqrt(self.n_max)*self.ft(k1)
-        self.coeffs = self.ift(self.ytilde/self.lam).real
+        #     k1 = self._kernel_from_parts(k1parts)
+        #     k1[0] += self.noise
+        #     lam = np.sqrt(self.n_max)*self.ft(k1)
+        # self.lam_caches.insert_first_level(lam)
         data = {}
         if store_mll_hist:
             data["mll_hist"] = mll_hist
