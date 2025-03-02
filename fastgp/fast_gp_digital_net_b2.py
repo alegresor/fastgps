@@ -91,9 +91,9 @@ class FastGPDigitalNetB2(_FastGP):
         >>> cci_high
         tensor(20.2228)
         
-        >>> pcov_future = fgp.post_cov(x,z,future=True)
-        >>> pvar_future = fgp.post_var(x,future=True)
-        >>> pcvar_future = fgp.post_cubature_var(future=True)
+        >>> pcov_future = fgp.post_cov(x,z,n=2*fgp.n_max)
+        >>> pvar_future = fgp.post_var(x,n=2*fgp.n_max)
+        >>> pcvar_future = fgp.post_cubature_var(n=2*fgp.n_max)
         
         >>> fgp.double_n()
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)

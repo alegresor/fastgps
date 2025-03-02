@@ -50,21 +50,24 @@ fgp_lattice = fastgp.FastGPLattice(
 fgp_lattice.fit()
 pmean_lattice_n,pstd_lattice_n,q,ci_low_lattice_n,ci_high_lattice_n = fgp_lattice.post_ci(xticks[:,None])
 x_lattice_n,y_lattice_n = fgp_lattice.x.clone(),fgp_lattice.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_lattice.post_cubature_var(),fgp_lattice.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_lattice.post_cubature_var(),2*n,fgp_lattice.post_cubature_var(n=2*n),4*n,fgp_lattice.post_cubature_var(n=4*n)))
 
 print("  n = %d"%(2*n))
 fgp_lattice.double_n()
 fgp_lattice.fit()
 pmean_lattice_2n,pstd_lattice_2n,q,ci_low_lattice_2n,ci_high_lattice_2n = fgp_lattice.post_ci(xticks[:,None])
 x_lattice_2n,y_lattice_2n = fgp_lattice.x.clone(),fgp_lattice.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_lattice.post_cubature_var(),fgp_lattice.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_lattice.post_cubature_var(),4*n,fgp_lattice.post_cubature_var(n=4*n),8*n,fgp_lattice.post_cubature_var(n=8*n)))
 
 print("  n = %d"%(4*n))
 fgp_lattice.double_n()
 fgp_lattice.fit()
 pmean_lattice_4n,pstd_lattice_4n,q,ci_low_lattice_4n,ci_high_lattice_4n = fgp_lattice.post_ci(xticks[:,None])
 x_lattice_4n,y_lattice_4n = fgp_lattice.x.clone(),fgp_lattice.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_lattice.post_cubature_var(),fgp_lattice.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_lattice.post_cubature_var(),8*n,fgp_lattice.post_cubature_var(n=8*n),16*n,fgp_lattice.post_cubature_var(n=16*n)))
 
 print()
 
@@ -79,21 +82,24 @@ fgp_dnb2 = fastgp.FastGPDigitalNetB2(
 fgp_dnb2.fit()
 pmean_dnb2_n,pstd_dnb2_n,q,ci_low_dnb2_n,ci_high_dnb2_n = fgp_dnb2.post_ci(xticks[:,None])
 x_dnb2_n,y_dnb2_n = fgp_dnb2.x.clone(),fgp_dnb2.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_dnb2.post_cubature_var(),fgp_dnb2.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_dnb2.post_cubature_var(),2*n,fgp_dnb2.post_cubature_var(n=2*n),4*n,fgp_dnb2.post_cubature_var(n=4*n)))
 
 print("  n = %d"%(2*n))
 fgp_dnb2.double_n()
 fgp_dnb2.fit()
 pmean_dnb2_2n,pstd_dnb2_2n,q,ci_low_dnb2_2n,ci_high_dnb2_2n = fgp_dnb2.post_ci(xticks[:,None])
 x_dnb2_2n,y_dnb2_2n = fgp_dnb2.x.clone(),fgp_dnb2.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_dnb2.post_cubature_var(),fgp_dnb2.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_dnb2.post_cubature_var(),4*n,fgp_dnb2.post_cubature_var(n=4*n),8*n,fgp_dnb2.post_cubature_var(n=8*n)))
 
 print("  n = %d"%(4*n))
 fgp_dnb2.double_n()
 fgp_dnb2.fit()
 pmean_dnb2_4n,pstd_dnb2_4n,q,ci_low_dnb2_4n,ci_high_dnb2_4n = fgp_dnb2.post_ci(xticks[:,None])
 x_dnb2_4n,y_dnb2_4n = fgp_dnb2.x.clone(),fgp_dnb2.y.clone()
-print("    posterior cubature var: %.2e\tfuture: %.2e"%(fgp_dnb2.post_cubature_var(),fgp_dnb2.post_cubature_var(future=True)))
+print("    posterior cubature var: %-10.2e n=%d: %-10.2e n=%d: %-10.2e"%\
+    (fgp_dnb2.post_cubature_var(),8*n,fgp_dnb2.post_cubature_var(n=8*n),16*n,fgp_dnb2.post_cubature_var(n=16*n)))
 
 print("collecting data and plotting")
 data = [

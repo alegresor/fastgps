@@ -192,10 +192,12 @@ class _FastGP(torch.nn.Module):
         return self.lam_caches[int(np.log2(self.n_max))] 
     @property
     def x(self):
-        return self.xxb_seq.x 
+        x,xb = self.xxb_seq[:self.n_max]
+        return x
     @property
     def xb(self):
-        return self.xxb_seq.xb  
+        x,xb = self.xxb_seq[:self.n_max]
+        return xb
     @property
     def k1parts(self):
         return self.k1parts_seq.k1parts
@@ -262,7 +264,7 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean
-    def post_cov(self, x:torch.Tensor, z:torch.Tensor, future:bool=False, eval:bool=True):
+    def post_cov(self, x:torch.Tensor, z:torch.Tensor, n:int=None, eval:bool=True):
         """
         Posterior covariance. 
         If `torch.equal(x,z)` then the diagonal of the covariance matrix is forced to be non-negative. 
@@ -270,23 +272,27 @@ class _FastGP(torch.nn.Module):
         Args:
             x (torch.Tensor[N,d]): sampling locations
             z (torch.Tensor[M,d]): sampling locations
-            future (bool): If `True`, get the posterior covariance after doubling the sample size
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
             pcov (torch.Tensor[N,M]): posterior covariance matrix
         """
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert z.ndim==2 and z.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
         equal = torch.equal(x,z)
-        self__x,self_lam = (self.xxb_seq[:(2*self.n_max)][1],self.lam_caches[int(np.log2(self.n_max))+1]) if future else (self.xb[:self.n_max],self.lam)
+        _,self__x = self.xxb_seq[:2**m]
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         k = self.kernel(x[:,None,:],z[None,:,:])
         k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
         k2t = k1t if equal else self.ft(self.kernel(z[:,None,:],self__x[None,:,:])) 
-        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/self_lam).real
+        kmat = k-torch.einsum("il,rl->ir",k1t.conj(),k2t/lam).real
         if equal:
             nrange = torch.arange(x.size(0),device=x.device)
             diag = kmat[nrange,nrange]
@@ -295,26 +301,30 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return kmat
-    def post_var(self, x:torch.Tensor, future:bool=False, eval:bool=True):
+    def post_var(self, x:torch.Tensor, n:int=None, eval:bool=True):
         """
         Posterior variance. Forced to be non-negative.  
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            future (bool): If `True`, get the posterior variance after doubling the sample size
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
             pvar (torch.Tensor[N]): posterior variance vector
         """
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        self__x,self_lam = (self.xxb_seq[:(2*self.n_max)][1],self.lam_caches[int(np.log2(self.n_max))+1]) if future else (self.xb[:self.n_max],self.lam)
+        _,self__x = self.xxb_seq[:2**m]
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         k = self.kernel(x,x)
         k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
-        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/self_lam).real
+        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/lam).real
         diag[diag<0] = 0 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -372,22 +382,25 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean
-    def post_cubature_var(self, future:bool=False, eval:bool=True):
+    def post_cubature_var(self, n:int=None, eval:bool=True):
         """
         Posterior cubature variance. 
 
         Args:
             future (bool): If `True`, get the posterior cubature variance variance after doubling the sample size
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+            n (int): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n_max`. Must be `n=2^m` for some `m>=int(np.log2(self.n_max))`.  
 
         Returns:
             pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
         """
-        self_n_max,self_lam = (2*self.n_max,self.lam_caches[int(np.log2(self.n_max))+1]) if future else (self.n_max,self.lam)
+        if n is None: n = self.n_max
+        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n_max, "require n is an int power of two greater than or equal to self.n_max"
+        m = int(np.log2(n))
+        lam = self.lam_caches[m]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
-        pcvar = self.scale-self.scale**2*self_n_max/self_lam[0].real
+        pcvar = self.scale-self.scale**2*n/lam[0].real
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar
