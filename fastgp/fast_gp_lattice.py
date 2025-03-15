@@ -21,11 +21,12 @@ class FastGPLattice(_FastGP):
         ...     y = -t1-t2+t3
         ...     return y
 
+        >>> n = 2**10
         >>> d = 2
-        >>> fgp = FastGPLattice(
-        ...     f = f_ackley,
-        ...     seq = qmcpy.Lattice(dimension=d,seed=7),
-        ...     n = 2**10)
+        >>> fgp = FastGPLattice(seq = qmcpy.Lattice(dimension=d,seed=7))
+        >>> x_next = fgp.get_x_next(n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
 
         >>> rng = torch.Generator().manual_seed(17)
         >>> x = torch.rand((2**7,d),generator=rng)
@@ -92,8 +93,6 @@ class FastGPLattice(_FastGP):
         >>> assert torch.allclose(pcov.diagonal(),pvar)
 
         >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
-        >>> q
-        np.float64(2.5758293035489004)
         >>> ci_low.shape
         torch.Size([128])
         >>> ci_high.shape
@@ -110,11 +109,13 @@ class FastGPLattice(_FastGP):
         >>> cci_high
         tensor(20.1887)
 
-        >>> pcov_future = fgp.post_cov(x,z,n=2*fgp.n_max)
-        >>> pvar_future = fgp.post_var(x,n=2*fgp.n_max)
-        >>> pcvar_future = fgp.post_cubature_var(n=2*fgp.n_max)
+        >>> pcov_future = fgp.post_cov(x,z,n=2*n)
+        >>> pvar_future = fgp.post_var(x,n=2*n)
+        >>> pcvar_future = fgp.post_cubature_var(n=2*n)
 
-        >>> fgp.double_n()
+        >>> x_next = fgp.get_x_next(2*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0309)
 
@@ -127,7 +128,9 @@ class FastGPLattice(_FastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0274)
 
-        >>> fgp.double_n()
+        >>> x_next = fgp.get_x_next(4*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0277)
 
@@ -136,16 +139,17 @@ class FastGPLattice(_FastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0275)
 
-        >>> pcov_8n = fgp.post_cov(x,z,n=8*fgp.n_max)
-        >>> pvar_8n = fgp.post_var(x,n=8*fgp.n_max)
-        >>> pcvar_8n = fgp.post_cubature_var(n=8*fgp.n_max)
-        >>> fgp.add_n(n=8*fgp.n_max)
-        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_8n)
-        >>> assert torch.allclose(fgp.post_var(x),pvar_8n)
-        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_8n)
+        >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
+        >>> pvar_16n = fgp.post_var(x,n=16*n)
+        >>> pcvar_16n = fgp.post_cubature_var(n=16*n)
+        >>> x_next = fgp.get_x_next(16*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
+        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_16n)
+        >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
+        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
     def __init__(self,
-            f:callable,
             seq:qmcpy.Lattice,
             n:int = 2**10,
             alpha:int = 2,
@@ -164,16 +168,11 @@ class FastGPLattice(_FastGP):
             ):
         """
         Args:
-            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(*batch_size,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
-                ```python
-                f = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1)
-                ```
             seq (Union[qmcpy.Lattice,int]): lattice generator with order="NATURAL" and randomize in ["SHIFT","FALSE"], where if an int `d` is passed in we use
                 ```python
                 qmcpy.Lattice(d)
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.lattice.lattice" target="_blank">`qmcpy.Lattice` docs</a> for more info
-            n (int): number of lattice points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
@@ -196,9 +195,7 @@ class FastGPLattice(_FastGP):
         ift = torch.compile(qmcpy.ifftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.ifftbr_torch
         self.__const_for_kernel = None
         super().__init__(
-            f,
             seq,
-            n,
             alpha,
             scale,
             lengthscales,

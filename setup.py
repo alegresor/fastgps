@@ -15,7 +15,7 @@ setuptools.setup(
     install_requires = [
         "qmcpy >= 1.6.2",
         "torch >= 2.0.0",
-        "numpy >= 2.0.0",
+        "numpy >= 1.17.0",
         "scipy >= 1.13.0",
     ],
     classifiers = [

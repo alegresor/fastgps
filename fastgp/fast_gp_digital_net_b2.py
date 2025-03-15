@@ -21,11 +21,12 @@ class FastGPDigitalNetB2(_FastGP):
         ...     y = -t1-t2+t3
         ...     return y
 
+        >>> n = 2**10
         >>> d = 2
-        >>> fgp = FastGPDigitalNetB2(
-        ...     f = f_ackley,
-        ...     seq = qmcpy.DigitalNetB2(dimension=d,seed=7),
-        ...     n = 2**10)
+        >>> fgp = FastGPDigitalNetB2(qmcpy.DigitalNetB2(dimension=d,seed=7))
+        >>> x_next = fgp.get_x_next(n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
 
         >>> rng = torch.Generator().manual_seed(17)
         >>> x = torch.rand((2**7,d),generator=rng)
@@ -73,8 +74,6 @@ class FastGPDigitalNetB2(_FastGP):
         >>> assert torch.allclose(pcov.diagonal(),pvar)
 
         >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
-        >>> q
-        np.float64(2.5758293035489004)
         >>> ci_low.shape
         torch.Size([128])
         >>> ci_high.shape
@@ -91,11 +90,13 @@ class FastGPDigitalNetB2(_FastGP):
         >>> cci_high
         tensor(20.2228)
         
-        >>> pcov_future = fgp.post_cov(x,z,n=2*fgp.n_max)
-        >>> pvar_future = fgp.post_var(x,n=2*fgp.n_max)
-        >>> pcvar_future = fgp.post_cubature_var(n=2*fgp.n_max)
+        >>> pcov_future = fgp.post_cov(x,z,n=2*n)
+        >>> pvar_future = fgp.post_var(x,n=2*n)
+        >>> pcvar_future = fgp.post_cubature_var(n=2*n)
         
-        >>> fgp.double_n()
+        >>> x_next = fgp.get_x_next(2*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0258)
 
@@ -108,7 +109,9 @@ class FastGPDigitalNetB2(_FastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0258)
 
-        >>> fgp.double_n()
+        >>> x_next = fgp.get_x_next(4*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0192)
 
@@ -117,16 +120,17 @@ class FastGPDigitalNetB2(_FastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0187)
 
-        >>> pcov_8n = fgp.post_cov(x,z,n=8*fgp.n_max)
-        >>> pvar_8n = fgp.post_var(x,n=8*fgp.n_max)
-        >>> pcvar_8n = fgp.post_cubature_var(n=8*fgp.n_max)
-        >>> fgp.add_n(n=8*fgp.n_max)
-        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_8n)
-        >>> assert torch.allclose(fgp.post_var(x),pvar_8n)
-        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_8n)
+        >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
+        >>> pvar_16n = fgp.post_var(x,n=16*n)
+        >>> pcvar_16n = fgp.post_cubature_var(n=16*n)
+        >>> x_next = fgp.get_x_next(16*n)
+        >>> y_next = f_ackley(x_next)
+        >>> fgp.add_y_next(y_next)
+        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_16n)
+        >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
+        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
     def __init__(self,
-            f:callable,
             seq:Union[qmcpy.DigitalNetB2,int],
             n:int = 2**10,
             alpha:int = 2,
@@ -145,16 +149,11 @@ class FastGPDigitalNetB2(_FastGP):
             ):
         """
         Args:
-            f (callable): function to model where `y=f(x)` with `x.shape==(n,d)` and `y.shape==(*batch_size,n)`, e.g. the <a href="https://www.sfu.ca/~ssurjano/stybtang.html" target="_blank">Styblinski-Tang function</a> is 
-                ```python
-                f = lambda x: 1/2*((10*x-5)**4-16*(10*x-5)**2+5*(10*x-5)).sum(1)
-                ```
             seq (Union[qmcpy.DigitalNetB2,int]): digital sequence generator in base $b=2$ with order="NATURAL" and randomize in ["LMS_DS","DS","LMS","FALSE"], where if an int `d` is passed in we use 
                 ```python
                 qmcpy.DigitalNetB2(d)
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info
-            n (int): number of digital sequence points to generate
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
@@ -176,9 +175,7 @@ class FastGPDigitalNetB2(_FastGP):
         self.t = seq.t_lms
         ft = ift = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
-            f,
             seq,
-            n,
             alpha,
             scale,
             lengthscales,
