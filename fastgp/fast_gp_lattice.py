@@ -151,7 +151,6 @@ class FastGPLattice(_FastGP):
     """
     def __init__(self,
             seq:qmcpy.Lattice,
-            n:int = 2**10,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 1, 

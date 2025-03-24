@@ -184,7 +184,7 @@ class _FastGP(torch.nn.Module):
         assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
-        self.ft = ft 
+        self.ft = ft
         self.ift = ift
         self.xxb_seq = _XXbSeq(self)
         self.k1parts_seq = _K1PartsSeq(self)
@@ -494,6 +494,7 @@ class _FastGP(torch.nn.Module):
                 ["mll_hist","scale_hist","lengthscales_hist","noise_hist"]
                 ```
         """
+        assert self.n>0, "cannot fit without data"
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
             assert np.isscalar(lr) and lr>0, "require lr is a positive float"
