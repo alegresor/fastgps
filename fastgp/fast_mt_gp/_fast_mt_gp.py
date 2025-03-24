@@ -2,53 +2,62 @@ import torch
 import numpy as np 
 import scipy.stats 
 import os
+import qmcpy
+import itertools 
 
 class _XXbSeq(object):
-    def __init__(self, fgp):
+    def __init__(self, fgp, seq):
         self.fgp = fgp
+        self.seq = seq
         self.n = 0
+        self.x = torch.empty((0,seq.d))
+        self.xb = torch.empty((0,seq.d),dtype=self.fgp._XBDTYPE)
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None) 
         assert isinstance(i,slice)
         if i.stop>self.n:
-            x_next,xb_next = self.fgp._sample(self.n,i.stop)
+            x_next,xb_next = self.fgp._sample(self.seq,self.n,i.stop)
             if x_next.data_ptr()==xb_next.data_ptr():
-                self.x = self.xb = torch.vstack([self.x,x_next]) if hasattr(self,"x") else x_next
+                self.x = self.xb = torch.vstack([self.x,x_next])
             else:
-                self.x = torch.vstack([self.x,x_next]) if hasattr(self,"x") else x_next
-                self.xb = torch.vstack([self.xb,xb_next]) if hasattr(self,"xb") else xb_next
+                self.x = torch.vstack([self.x,x_next])
+                self.xb = torch.vstack([self.xb,xb_next])
             self.n = i.stop
         return self.x[i],self.xb[i]
 
 class _K1PartsSeq(object):
-    def __init__(self, fgp):
-        self.fgp = fgp
-        self.k1parts = torch.empty((0,self.fgp.d))
+    def __init__(self, fgp, xxb_seq_first, xxb_seq_second, _kernel_parts):
+        self.xxb_seq_first = xxb_seq_first
+        self.xxb_seq_second = xxb_seq_second
+        self._kernel_parts = _kernel_parts
+        self.k1parts = torch.empty((0,fgp.d))
         self.n = 0
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None) 
         assert isinstance(i,slice)
         if i.stop>self.n:
-            _,xb0 = self.fgp.xxb_seq[:1]
-            _,xb_next = self.fgp.xxb_seq[self.n:i.stop]
-            k1parts_next = self.fgp._kernel_parts(xb_next,xb0)
+            _,xb_next = self.xxb_seq_first[self.n:i.stop]
+            _,xb0 = self.xxb_seq_second[:1]
+            k1parts_next = self._kernel_parts(xb_next,xb0)
             self.k1parts = torch.vstack([self.k1parts,k1parts_next])
             self.n = i.stop
         return self.k1parts[i]
 
 class _LamCaches(object):
-    def __init__(self, fgp):
+    def __init__(self, fgp, i0, i1):
         self.fgp = fgp
+        self.i0 = i0
+        self.i1 = i1
         self.m_min,self.m_max = -1,-1
     def __getitem__no_delete(self, m):
         assert isinstance(m,int)
         assert m>=self.m_min, "old lambda are not retained after updating"
         assert m>=0
         if self.m_min==-1:
-            assert self.fgp.n>0
-            k1 = self.fgp._kernel_from_parts(self.fgp.k1parts)
+            assert self.fgp.n[self.i0]>0 and self.fgp.n[self.i1]>0
+            k1 = self.fgp._kernel_from_parts(self.fgp.k1parts[self.i0,self.i1])
             k1[0] += self.fgp.noise
-            self.lam_list = [np.sqrt(self.fgp.n)*self.fgp.ft(k1)]
+            self.lam_list = [np.sqrt(self.fgp.n[i0])*self.fgp.ft(k1)]
             self.raw_scale_freeze_list = [self.fgp.raw_scale.clone()]
             self.raw_lengthscales_freeze_list = [self.fgp.raw_lengthscales.clone()]
             self.raw_noise_freeze_list = [self.fgp.raw_noise.clone()]
@@ -60,7 +69,7 @@ class _LamCaches(object):
                 not torch.equal(self.raw_lengthscales_freeze_list[0],self.fgp.raw_lengthscales) or 
                 not torch.equal(self.raw_noise_freeze_list[0],self.fgp.raw_noise)
             ):
-                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[:2**self.m_min])
+                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][:2**self.m_min])
                 k1[0] += self.fgp.noise
                 self.lam_list[0] = np.sqrt(2**self.m_min)*self.fgp.ft(k1)
             return self.lam_list[0]
@@ -77,14 +86,14 @@ class _LamCaches(object):
             not torch.equal(self.raw_noise_freeze_list[midx],self.fgp.raw_noise)
         ):
                 omega_m = self.fgp.get_omega(m-1)
-                k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[2**(m-1):2**m])
+                k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][2**(m-1):2**m])
                 lam_m = np.sqrt(2**(m-1))*self.fgp.ft(k1_m)
                 omega_lam_m = omega_m*lam_m
                 lam_m_prev = self.__getitem__no_delete(m-1)
                 self.lam_list[midx] = torch.hstack([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m])
                 FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
                 if FASTGP_DEBUG=="True":
-                    k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[:2**m])
+                    k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][:2**m])
                     lam_full = np.sqrt(2**m)*self.fgp.ft(k1_full)
                     assert torch.allclose(self.lam_list[midx],lam_full,atol=1e-7,rtol=0)
                 self.raw_scale_freeze_list[midx] = self.fgp.raw_scale.clone()
@@ -102,33 +111,13 @@ class _LamCaches(object):
             self.m_min += 1
         return lam
 
-class _CoeffsCache(object):
-    def __init__(self, fgp):
-        self.fgp = fgp 
-        self.raw_scale_freeze = self.fgp.raw_scale.clone()
-        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
-        self.raw_noise_freeze = self.fgp.raw_noise.clone()
-    def __call__(self):
-        if (
-                not hasattr(self,"coeffs") or 
-                self.coeffs.shape!=self.fgp.y.shape or 
-                (self.fgp.raw_scale!=self.raw_scale_freeze).any() or 
-                (self.fgp.raw_lengthscales!=self.raw_lengthscales_freeze).any() or 
-                (self.fgp.raw_noise!=self.raw_noise_freeze).any()
-        ):
-            self.coeffs = self.fgp.ift(self.fgp.ytilde/self.fgp.lam).real
-            self.raw_scale_freeze = self.fgp.raw_scale.clone()
-            self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
-            self.raw_noise_freeze = self.fgp.raw_noise.clone()
-        return self.coeffs 
-
 class _YtildeCache(object):
-    def __init__(self, fgp):
+    def __init__(self, fgp, i):
         self.fgp = fgp
+        self.i = i
     def __call__(self):
         if not hasattr(self,"ytilde"):
-            assert self.fgp.n>0
-            self.ytilde = self.fgp.ft(self.fgp.y)
+            self.ytilde = self.fgp.ft(self.fgp.y[self.i])
             return self.ytilde
         while self.fgp.y.shape!=self.ytilde.shape:
             n_curr = self.ytilde.size(-1)
@@ -144,9 +133,30 @@ class _YtildeCache(object):
                 assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
         return self.ytilde 
 
+class _InverseDetCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp 
+        self._freeze()
+    def _frozen_equal(self):
+        return (
+            (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
+            (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
+            (self.fgp.raw_noise==self.raw_noise_freeze).all())
+    def _freeze(self):
+        self.raw_scale_freeze = self.fgp.raw_scale.clone()
+        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
+        self.raw_noise_freeze = self.fgp.raw_noise.clone()
+    def __call__(self):
+        if not hasattr(self,"coeffs") or self.coeffs.shape!=self.fgp.y.shape or (not self._frozen_equal()):
+            assert False, "have not accounted for this yet" 
+            #self.coeffs = self.fgp.ift(self.fgp.ytilde/self.fgp.lam).real
+            self._freeze()
+        return self.coeffs 
+
 class _FastMultiTaskGP(torch.nn.Module):
     def __init__(self,
-        seq,
+        seqs,
+        num_tasks, 
         alpha,
         scale,
         lengthscales,
@@ -163,10 +173,14 @@ class _FastMultiTaskGP(torch.nn.Module):
         ):
         super().__init__()
         assert torch.get_default_dtype()==torch.float64, "fast transforms do not work without torch.float64 precision" 
+        assert isinstance(num_tasks,int) and num_tasks>0
+        self.num_tasks = num_tasks
         self.device = torch.device(device)
-        self.seq = seq
-        self.d = self.seq.d
-        self.n = 0
+        assert isinstance(seqs,np.ndarray) and seqs.shape==(self.num_tasks,)
+        self.d = seqs[0].d
+        assert all(seqs[i].d==self.d for i in range(self.num_tasks))
+        self.seqs = seqs
+        self.n = torch.zeros(self.num_tasks,dtype=int)
         assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self,d,)), "alpha should be an int or a torch.Tensor of length d"
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
@@ -189,35 +203,26 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
         self.ft = ft
         self.ift = ift
-        self.xxb_seq = _XXbSeq(self)
-        self.k1parts_seq = _K1PartsSeq(self)
-        self.lam_caches = _LamCaches(self)
-        self.ytilde_cache = _YtildeCache(self)
-        self.coeffs_cache = _CoeffsCache(self)
-    @property 
-    def m(self):
-        assert self.n>0
-        return int(np.log2(self.n))
-    @property
-    def lam(self):
-        return self.lam_caches[self.m] 
-    @property
-    def x(self):
-        x,xb = self.xxb_seq[:self.n]
+        self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
+        self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[i0],self.xxb_seqs[i1],self._kernel_parts) for i1 in range(self.num_tasks)] for i0 in range(self.num_tasks)],dtype=object)
+        self.lam_caches = np.array([[_LamCaches(self,i0,i1) for i1 in range(self.num_tasks)] for i0 in range(self.num_tasks)],dtype=object)
+        self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
+        self.inv_det_cache = _InverseDetCache(self)
+    def get_x(self, task):
+        x,xb = self.xxb_seqs[task][:self.n]
         return x
-    @property
-    def xb(self):
-        x,xb = self.xxb_seq[:self.n]
+    def get_xb(self, task):
+        x,xb = self.xxb_seq[task][:self.n]
         return xb
+    def get_lam(self, task0, task1):
+        return self.lam_caches[int(torch.log2(self.n[task0]))] if (self.n[task0]>0 and self.n[task1]>0) else torch.emtpy(0)
+    def get_k1parts(self, task0, task1):
+        return self.k1parts_seq[task0,task1][:self.n]
+    def get_ytilde(self, task):
+        return self.ytilde_cache[task]()
     @property
-    def k1parts(self):
-        return self.k1parts_seq[:self.n]
-    @property
-    def ytilde(self):
-        return self.ytilde_cache()
-    @property
-    def coeffs(self):
-        return self.coeffs_cache()
+    def inv_det(self):
+        return self.inv_det_cache()
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -232,28 +237,29 @@ class _FastMultiTaskGP(torch.nn.Module):
         Get next sampling locations. 
 
         Args:
-            n (int): maximum sample index
+            n (torch.Tensor[num_tasks]): maximum sample index for each task
         
         Returns:
-            x_next (torch.Tensor[n-self.n,d]): next samples in the sequence
+            x_next (np.ndarray[num_tasks] of torch.Tensor[n[i]-self.n[i],d]): next samples in the sequence
         """
-        assert n>self.n and n&(n-1)==0, "maximum sequence index must be a power of 2 greater than the current number of samples"
-        x,xb = self.xxb_seq[self.n:n]
-        return x
+        assert isinstance(n,list) or isinstance(n,torch.Tensor)
+        if isinstance(n,list):
+            n = torch.tensor(n,dtype=int)
+        assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all() and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2 greater than the current number of samples"
+        return np.array([self.xxb_seqs[i][self.n[i]:n[i]][0] for i in range(self.num_tasks)],dtype=object)
     def add_y_next(self, y_next):
         """
         Increase the sample size to `n`. 
 
         Args:
-            n (int): number of points to increase the sample size to
+            y_next (np.ndarray[num_tasks] of torch.Tensor[...,n[i]-self.n[i]]): new function evaluations for each task
         """
         if not hasattr(self,"y"):
             self.y = y_next
-            self.d_out = self.y.numel()/self.y.size(-1)
         else:
-            self.y = torch.cat([self.y,y_next],-1)
-        self.n = self.y.size(-1)
-        assert self.n&(self.n-1)==0, "total samples must be power of 2"
+            self.y = np.array([torch.cat([self.y[i],y_next[i]],-1) for i in range(self.num_tasks)],dtype=object)
+        self.n = torch.tensor([self.y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
+        assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):

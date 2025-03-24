@@ -23,7 +23,7 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
 
         >>> n = 2**10
         >>> d = 2
-        >>> fgp = FastMultiTaskGPLattice(seq = qmcpy.Lattice(dimension=d,seed=7))
+        >>> fgp = FastMultiTaskGPLattice(seqs = qmcpy.Lattice(dimension=d,seed=7))
         >>> x_next = fgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
@@ -149,8 +149,11 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
+    _XBDTYPE = torch.float64
     def __init__(self,
-            seq:qmcpy.Lattice,
+            seqs:qmcpy.Lattice,
+            num_tasks:int,
+            seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 1, 
@@ -167,11 +170,13 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             ):
         """
         Args:
-            seq (Union[qmcpy.Lattice,int]): lattice generator with order="NATURAL" and randomize in ["SHIFT","FALSE"], where if an int `d` is passed in we use
+            seqs (Union[qmcpy.Lattice,int]): lattice generator with order="NATURAL" and randomize in ["SHIFT","FALSE"], where if an int `d` is passed in we use
                 ```python
                 qmcpy.Lattice(d)
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.lattice.lattice" target="_blank">`qmcpy.Lattice` docs</a> for more info
+            num_tasks (int): number of tasks
+            seed_for_seq (int): seed used for lattice randomization
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
@@ -187,14 +192,24 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
-        if isinstance(seq,int):
-            seq = qmcpy.Lattice(seq,seed=7)
-        assert isinstance(seq,qmcpy.Lattice) and seq.order=="NATURAL" and seq.replications==1, "seq should be a qmcpy.Lattice instance with order='NATURAL' and replications=1"
+        assert isinstance(num_tasks,int) and num_tasks>0
+        if isinstance(seqs,int):
+            np_seed_seqs = np.random.SeedSequence(seed_for_seq)
+            seeds = np_seed_seqs.spawn(num_tasks)
+            seqs = [qmcpy.Lattice(seqs,seed=seeds[i]) for i in range(num_tasks)]
+        if isinstance(seqs,list):
+            seqs = np.array(seqs,dtype=object)
+        assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
+        assert all(isinstance(seqs[i],qmcpy.Lattice) for i in range(num_tasks)), "each seq should be a qmcpy.Lattice instances"
+        assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
+        assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
+        assert all(seqs[i].randomize in ['FALSE','SHIFT'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','SHIFT']"
         ft = torch.compile(qmcpy.fftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fftbr_torch
         ift = torch.compile(qmcpy.ifftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.ifftbr_torch
         self.__const_for_kernel = None
         super().__init__(
-            seq,
+            seqs,
+            num_tasks,
             alpha,
             scale,
             lengthscales,
@@ -210,8 +225,8 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         )
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
-    def _sample(self, n_min, n_max):
-        x = torch.from_numpy(self.seq.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
+    def _sample(self, seq, n_min, n_max):
+        x = torch.from_numpy(seq.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
         return x,x
     @property
     def const_for_kernel(self):

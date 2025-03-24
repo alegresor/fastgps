@@ -130,8 +130,11 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
+    _XBDTYPE = torch.int64
     def __init__(self,
-            seq:Union[qmcpy.DigitalNetB2,int],
+            seqs:Union[qmcpy.DigitalNetB2,int],
+            num_tasks:int,
+            seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:torch.Tensor = 1, 
@@ -148,11 +151,13 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             ):
         """
         Args:
-            seq (Union[qmcpy.DigitalNetB2,int]): digital sequence generator in base $b=2$ with order="NATURAL" and randomize in ["LMS_DS","DS","LMS","FALSE"], where if an int `d` is passed in we use 
+            seqs (Union[qmcpy.DigitalNetB2,int]): digital sequence generator in base $b=2$ with order="NATURAL" and randomize in ["LMS_DS","DS","LMS","FALSE"], where if an int `d` is passed in we use 
                 ```python
                 qmcpy.DigitalNetB2(d)
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info
+            num_tasks (int): number of tasks 
+            seed_for_seq (int): seed used for digital net randomization
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
             lengthscales (torch.Tensor[d]): vector of kernel lengthscales
@@ -168,13 +173,25 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
-        if isinstance(seq,int):
-            seq = qmcpy.DigitalNetB2(seq)
-        assert isinstance(seq,qmcpy.DigitalNetB2) and seq.order=="NATURAL" and seq.replications==1 and seq.t_lms<64 and seq.randomize in ['LMS_DS','DS','LMS','FALSE'], "seq should be a qmcpy.DigitalNetB2 instance with order='NATURAL', replications=1, t_lms<64, and randomize in ['LMS_DS','DS','LMS','FALSE']"
-        self.t = seq.t_lms
+        assert isinstance(num_tasks,int) and num_tasks>0
+        if isinstance(seqs,int):
+            np_seed_seqs = np.random.SeedSequence(seed_for_seq)
+            seeds = np_seed_seqs.spawn(num_tasks)
+            seqs = [qmcpy.DigitalNetB2(seqs,seed=seeds[i]) for i in range(num_tasks)]
+        if isinstance(seqs,list):
+            seqs = np.array(seqs,dtype=object)
+        assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
+        assert all(isinstance(seqs[i],qmcpy.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qmcpy.DigitalNetB2 instances"
+        assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
+        assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
+        assert all(seqs[i].t_lms<64 for i in range(num_tasks)), "each seq must have t_lms<64"
+        assert all(seqs[i].randomize in ['LMS_DS','DS','LMS','FALSE'] for i in range(num_tasks)), "each seq should have randomize in ['LMS_DS','DS','LMS','FALSE']"
+        assert all(seqs[i].t_lms==seqs[0].t_lms for i in range(num_tasks)), "all seqs should have the same t_lms"
+        self.t = seqs[0].t_lms 
         ft = ift = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
-            seq,
+            seqs,
+            num_tasks,
             alpha,
             scale,
             lengthscales,
@@ -190,12 +207,12 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         )
     def get_omega(self, m):
         return 1
-    def _sample(self, n_min, n_max):
-        _x = torch.from_numpy(self.seq.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
+    def _sample(self, seq, n_min, n_max):
+        _x = torch.from_numpy(seq.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
         x = self._convert_from_b(_x)
         return x,_x
     def _convert_to_b(self, x):
-        return torch.floor((x%1)*2**(self.t)).to(torch.int64)
+        return torch.floor((x%1)*2**(self.t)).to(self._XBDTYPE)
     def _convert_from_b(self, xb):
         return xb*2**(-self.t)
     def _ominus(self, x_or_xb, z_or_zb):
