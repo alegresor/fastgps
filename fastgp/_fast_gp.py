@@ -40,7 +40,7 @@ class _LamCaches(object):
     def __init__(self, fgp):
         self.fgp = fgp
         self.m_min,self.m_max = -1,-1
-    def __getitem__(self, m):
+    def __getitem__no_delete(self, m):
         assert isinstance(m,int)
         assert m>=self.m_min, "old lambda are not retained after updating"
         assert m>=0
@@ -80,7 +80,7 @@ class _LamCaches(object):
                 k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[2**(m-1):2**m])
                 lam_m = np.sqrt(2**(m-1))*self.fgp.ft(k1_m)
                 omega_lam_m = omega_m*lam_m
-                lam_m_prev = self[m-1]
+                lam_m_prev = self.__getitem__no_delete(m-1)
                 self.lam_list[midx] = torch.hstack([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m])
                 FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
                 if FASTGP_DEBUG=="True":
@@ -90,14 +90,17 @@ class _LamCaches(object):
                 self.raw_scale_freeze_list[midx] = self.fgp.raw_scale.clone()
                 self.raw_lengthscales_freeze_list[midx] = self.fgp.raw_lengthscales.clone()
                 self.raw_noise_freeze_list[midx] = self.fgp.raw_noise.clone()
+                lam_return = self.lam_list[midx]
+        return self.lam_list[midx]
+    def __getitem__(self, m):
+        lam = self.__getitem__no_delete(m)
         while self.m_min<self.fgp.m:
             del self.lam_list[0]
             del self.raw_scale_freeze_list[0]
             del self.raw_lengthscales_freeze_list[0]
             del self.raw_noise_freeze_list[0]
             self.m_min += 1
-        midx = m-self.m_min
-        return self.lam_list[midx]
+        return lam
 
 class _CoeffsCache(object):
     def __init__(self, fgp):
