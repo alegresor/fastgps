@@ -24,7 +24,13 @@ for fgp in fgps:
     x_next = fgp.get_x_next(n=[16,4])
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
+
+    print(fgp.get_lam(0,0).shape)
+    print(fgp.get_lam(0,1).shape)
+    print(fgp.get_lam(1,0).shape)
+    print(fgp.get_lam(1,1).shape)
     print()
+
 # fgp.fit(iterations=10)
 
 # x_next = fgp.get_x_next(n=32)

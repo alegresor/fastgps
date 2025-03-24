@@ -131,6 +131,7 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
     _XBDTYPE = torch.int64
+    _FTOUTDTYPE = torch.float64
     def __init__(self,
             seqs:Union[qmcpy.DigitalNetB2,int],
             num_tasks:int,

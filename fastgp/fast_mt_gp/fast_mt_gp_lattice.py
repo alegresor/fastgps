@@ -150,6 +150,7 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
     _XBDTYPE = torch.float64
+    _FTOUTDTYPE = torch.complex128
     def __init__(self,
             seqs:qmcpy.Lattice,
             num_tasks:int,
