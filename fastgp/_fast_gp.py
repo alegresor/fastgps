@@ -227,6 +227,11 @@ class _FastGP(torch.nn.Module):
     @property
     def noise(self):
         return self.tf_noise(self.raw_noise)
+    @property
+    def gram_log_det(self):
+        return self.d_out*torch.log(torch.abs(self.lam)).sum()
+    def gram_solve_system(self, y):
+        return y/self.lam
     def get_x_next(self, n):
         """
         Get next sampling locations. 
@@ -532,7 +537,7 @@ class _FastGP(torch.nn.Module):
         stop_crit_iterations_without_improvement_mll = 0
         absytilde2 = torch.abs(self.ytilde)**2
         for i in range(iterations+1):
-            mll = (absytilde2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
+            mll = (self.ytilde.conj()*self.gram_solve_system(self.ytilde)).real.sum()+self.gram_log_det+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
             if mll.item()<stop_crit_save_mll*(1-stop_crit_improvement_threshold):
