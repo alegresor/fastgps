@@ -134,7 +134,7 @@ class _YtildeCache(object):
                 assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
         return self.ytilde 
 
-class _InverseDetCache(object):
+class _InverseLogDetCache(object):
     def __init__(self, fgp):
         self.fgp = fgp 
         self._freeze()
@@ -148,11 +148,58 @@ class _InverseDetCache(object):
         self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
         self.raw_noise_freeze = self.fgp.raw_noise.clone()
     def __call__(self):
-        if not hasattr(self,"coeffs") or self.coeffs.shape!=self.fgp.y.shape or (not self._frozen_equal()):
-            assert False, "have not accounted for this yet" 
-            #self.coeffs = self.fgp.ift(self.fgp.ytilde/self.fgp.lam).real
+        if not hasattr(self,"inv") or (self.n!=self.fgp.n).any() or (not self._frozen_equal()):
+            o = self.fgp.task_order
+            n = self.fgp.n[o]
+            lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
+            for i0 in range(self.fgp.num_tasks):
+                for i1 in range(i0,self.fgp.num_tasks):
+                    lams[i0,i1] = self.fgp.get_lam(o[i0],o[i1]).reshape((-1,1,n[i1]))
+                    print(i0,i1,lams[i0,i1].shape)
+            self.logdet = torch.log(torch.abs(lams[0,0][0])).sum()
+            self.inv = 1/lams[0,0]
+            print()
+            for l in range(1,self.fgp.num_tasks):
+                b = torch.cat([lams[k,l] for k in range(l)],dim=0).reshape((-1,1,n[l]))
+                v = b.reshape((self.inv.size(1),-1))
+                t1 = (v*self.inv).sum(1)
+                t2 = (v.conj()*t1).reshape((-1,n[l]))
+                s = lams[l,l][0]-t2.sum(0)
+                self.logdet += torch.log(torch.abs(s)).sum()
+                sinv = 1/s
+                t3 = t2*sinv
+                t4 = t2[:,None,:]*t3[None,:,:]
+                r = self.inv.size(-1)//t4.size(-1)
+                ii = torch.arange(self.inv.size(0))
+                jj = torch.arange(self.inv.size(-1))
+                ii0,ii1,ii2 = torch.meshgrid(ii,ii,jj,indexing="ij")
+                ii0,ii1,ii2 = ii0.flatten(),ii1.flatten(),ii2.flatten()
+                jj0 = ii2%t4.size(-1)
+                jj1 = ii2//t4.size(-1)
+                t4[ii0*r+jj1,ii1*r+jj1,jj0] += self.inv[ii0,ii1,ii2]
+                print("l = ",l)
+                print("r = ",r)
+                print("self.inv.shape = %s"%str(tuple(self.inv.shape)))
+                
+                # t4[::r,::r] += self.inv 
+
+                print("b.shape = %s"%str(tuple(b.shape)))
+                print("v.shape = %s"%str(tuple(v.shape)))
+                print("t1.shape = %s"%str(tuple(t1.shape)))
+                print("t2.shape = %s"%str(tuple(t2.shape)))
+                print("s.shape = %s"%str(tuple(s.shape)))
+                print("t3.shape = %s"%str(tuple(t3.shape)))
+                print("t4.shape = %s"%str(tuple(t4.shape)))
+                ur = torch.cat([t4,-t3[:,None,:]],dim=1)
+                br = torch.cat([-t3.conj()[None,:,:],s[None,:,:]],dim=1)
+                self.inv = torch.cat([ur,br],dim=0)
+                print("ur.shape = %s"%str(tuple(ur.shape)))
+                print("br.shape = %s"%str(tuple(br.shape)))
+                print("self.inv.shape = %s"%str(tuple(self.inv.shape)))
+                print()
             self._freeze()
-        return self.coeffs 
+            self.n = self.fgp.n.clone()
+        return self.inv,self.logdet
 
 class _FastMultiTaskGP(torch.nn.Module):
     def __init__(self,
@@ -208,7 +255,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[i0],self.xxb_seqs[i1],self._kernel_parts) for i1 in range(self.num_tasks)] for i0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,i0,i1) for i1 in range(self.num_tasks)] for i0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
-        self.inv_det_cache = _InverseDetCache(self)
+        self.inv_log_det_cache = _InverseLogDetCache(self)
     def get_x(self, task):
         assert 0<=task<self.num_tasks
         x,xb = self.xxb_seqs[task][:self.n[task]]
@@ -229,13 +276,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         assert 0<=task<self.num_tasks
         return self.ytilde_cache[task]()
     def m(self, task):
-        if self.n[task]==0:
-            return -1 
-        else:
-            return int(np.log2(self.n[task].item()))
-    @property
-    def inv_det(self):
-        return self.inv_det_cache()
+        return -1 if self.n[task]==0 else int(np.log2(self.n[task].item()))
+    def get_inv_log_det(self):
+        return self.inv_log_det_cache()
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -245,6 +288,9 @@ class _FastMultiTaskGP(torch.nn.Module):
     @property
     def noise(self):
         return self.tf_noise(self.raw_noise)
+    @property 
+    def task_order(self):
+        return self.n.argsort(descending=True)
     def get_x_next(self, n):
         """
         Get next sampling locations. 

@@ -3,11 +3,12 @@ import torch
 
 torch.set_default_dtype(torch.float64)
 
-d = 3
-num_tasks = 2
+d = 5
+num_tasks = 3
 fs = [
     lambda x: torch.sin(x).sum(1),
-    lambda x: torch.cos(x).sum(1)
+    lambda x: torch.cos(x).sum(1),
+    lambda x: torch.tan(x).sum(1),
 ]
 
 fgps = [
@@ -17,18 +18,17 @@ fgps = [
 
 for fgp in fgps:
     print(fgp)
-    x_next = fgp.get_x_next(n=[4,0])
+    # x_next = fgp.get_x_next(n=[4,2,1])
+    # y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
+    # fgp.add_y_next(y_next)
+
+    x_next = fgp.get_x_next(n=[2**20,2**18,2**16])
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
-
-    x_next = fgp.get_x_next(n=[16,4])
-    y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
-    fgp.add_y_next(y_next)
-
-    print(fgp.get_lam(0,0).shape)
-    print(fgp.get_lam(0,1).shape)
-    print(fgp.get_lam(1,0).shape)
-    print(fgp.get_lam(1,1).shape)
+    
+    sparse_inv,det = fgp.inv_log_det_cache()
+    print(sparse_inv.shape)
+    print(det)
     print()
 
 # fgp.fit(iterations=10)
