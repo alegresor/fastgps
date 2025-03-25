@@ -202,11 +202,6 @@ class _InverseLogDetCache(object):
                 assert torch.allclose(torch.abs(torch.logdet(lammat)),self.logdet)
                 Afull = torch.vstack([torch.hstack([A[i0,i1]*torch.eye(A.size(-1)) for i1 in range(A.size(1))]) for i0 in range(A.size(0))])
                 assert torch.allclose(torch.linalg.inv(lammat),Afull)
-                kmat = torch.vstack([
-                    torch.hstack([self.fgp.kernel(self.fgp.get_x(ell0)[:,None,:],self.fgp.get_x(ell1)[None,:,:]) for ell1 in range(self.fgp.num_tasks)])
-                    for ell0 in range(self.fgp.num_tasks)])
-                kmat += self.fgp.noise*torch.eye(kmat.size(0))
-                assert torch.allclose(self.logdet,torch.logdet(kmat))
             self._freeze()
             self.n = self.fgp.n.clone()
             self.inv = A
@@ -290,6 +285,33 @@ class _FastMultiTaskGP(torch.nn.Module):
         return -1 if self.n[task]==0 else int(np.log2(self.n[task].item()))
     def get_inv_log_det(self):
         return self.inv_log_det_cache()
+    def gram_matrix_solve(self, y):
+        inv,logdet = self.get_inv_log_det()
+        yogdim = y.ndim 
+        if yogdim==1:
+            y = y[:,None] 
+        assert y.size(-2)==self.n.sum() 
+        z = y.transpose(dim0=-2,dim1=-1)
+        zs = z.split(self.n.tolist(),dim=-1)
+        zsp = [self.ft(zs[o]) for o in self.task_order]
+        z = torch.cat(zsp,dim=-1).reshape(list(z.shape[:-1])+[1,-1,self.n.min()])
+        z = (z*inv).sum(-2)
+        z = z.reshape(list(z.shape[:-2])+[-1])
+        zs = z.split(self.n[self.task_order].tolist(),dim=-1)
+        zsp = [self.ift(zs[o]).real for o in self.inv_task_order]
+        z = torch.cat(zsp,dim=-1).transpose(dim0=-2,dim1=-1)
+        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+        if FASTGP_DEBUG=="True":
+            kmat = torch.vstack([
+                torch.hstack([self.kernel(self.get_x(ell0)[:,None,:],self.get_x(ell1)[None,:,:]) for ell1 in range(self.num_tasks)])
+                for ell0 in range(self.num_tasks)])
+            kmat += self.noise*torch.eye(kmat.size(0))
+            assert torch.allclose(logdet,torch.logdet(kmat))
+            ztrue = torch.linalg.solve(kmat,y)
+            assert torch.allclose(ztrue,z)
+        if yogdim==1:
+            z = z[:,0]
+        return z
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -302,6 +324,9 @@ class _FastMultiTaskGP(torch.nn.Module):
     @property 
     def task_order(self):
         return self.n.argsort(descending=True)
+    @property
+    def inv_task_order(self):
+        return self.task_order.argsort()
     def get_x_next(self, n):
         """
         Get next sampling locations. 

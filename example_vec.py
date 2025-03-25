@@ -26,12 +26,11 @@ for fgp in fgps:
     # y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     # fgp.add_y_next(y_next)
 
-    x_next = fgp.get_x_next(n=[2**3,2**2,2**1])
+    x_next = fgp.get_x_next(n=[2**2,2**3,2**1])
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
     
-    sparse_inv,det = fgp.inv_log_det_cache()
-    print()
+    t = fgp.gram_matrix_solve(torch.rand(4,5,fgp.n.sum(),3))
 
 # fgp.fit(iterations=10)
 
