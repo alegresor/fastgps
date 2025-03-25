@@ -1,6 +1,10 @@
 import fastgp
 import torch
 
+import os
+os.environ["FASTGP_DEBUG"] = "True"
+
+
 torch.set_default_dtype(torch.float64)
 
 d = 5
@@ -12,8 +16,8 @@ fs = [
 ]
 
 fgps = [
+    fastgp.FastMultiTaskGPDigitalNetB2(seqs=d,num_tasks=num_tasks),
     fastgp.FastMultiTaskGPLattice(seqs=d,num_tasks=num_tasks),
-    fastgp.FastMultiTaskGPDigitalNetB2(seqs=d,num_tasks=num_tasks)
 ]
 
 for fgp in fgps:
@@ -22,7 +26,7 @@ for fgp in fgps:
     # y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     # fgp.add_y_next(y_next)
 
-    x_next = fgp.get_x_next(n=[2**20,2**18,2**16])
+    x_next = fgp.get_x_next(n=[2**7,2**5,2**2])
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
     

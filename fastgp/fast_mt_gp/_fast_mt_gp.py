@@ -70,7 +70,7 @@ class _LamCaches(object):
             #assert self.fgp.n[self.i0]>0 and self.fgp.n[self.i1]>0
             k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.i0,self.i1))
             k1[0] += self.fgp.noise
-            self.lam_list = [np.sqrt(self.fgp.n[self.i0])*self.fgp.ft(k1)]
+            self.lam_list = [np.sqrt(self.fgp.n[self.i1])*self.fgp.ft(k1)]
             self._freeze(0)
             self.m_min = self.m_max = self.fgp.m(self.i0)
             return self.lam_list[0]
@@ -154,51 +154,64 @@ class _InverseLogDetCache(object):
             lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
             for i0 in range(self.fgp.num_tasks):
                 for i1 in range(i0,self.fgp.num_tasks):
-                    lams[i0,i1] = self.fgp.get_lam(o[i0],o[i1]).reshape((-1,1,n[i1]))
+                    lams[i0,i1] = self.fgp.get_lam(o[i0],o[i1])
                     print(i0,i1,lams[i0,i1].shape)
-            self.logdet = torch.log(torch.abs(lams[0,0][0])).sum()
-            self.inv = 1/lams[0,0]
+            self.logdet = torch.log(torch.abs(lams[0,0])).sum()
+            A = (1/lams[0,0])[None,None,:]
             print()
             for l in range(1,self.fgp.num_tasks):
-                b = torch.cat([lams[k,l] for k in range(l)],dim=0).reshape((-1,1,n[l]))
-                v = b.reshape((self.inv.size(1),-1))
-                t1 = (v*self.inv).sum(1)
-                t2 = (v.conj()*t1).reshape((-1,n[l]))
-                s = lams[l,l][0]-t2.sum(0)
-                self.logdet += torch.log(torch.abs(s)).sum()
-                sinv = 1/s
-                t3 = t2*sinv
-                t4 = t2[:,None,:]*t3[None,:,:]
-                r = self.inv.size(-1)//t4.size(-1)
-                ii = torch.arange(self.inv.size(0))
-                jj = torch.arange(self.inv.size(-1))
+                print("A.shape = %s"%str(tuple(A.shape)))
+                B = torch.cat([lams[k,l] for k in range(l)],dim=0).reshape((-1,n[l]))
+                print("B.shape = %s"%str(tuple(B.shape)))
+                Bvec = B.reshape((A.size(1),-1))
+                print("Bvec.shape = %s"%str(tuple(Bvec.shape)))
+                T = (Bvec*A).sum(1).reshape((-1,n[l]))
+                print("T.shape = %s"%str(tuple(T.shape)))
+                M = (B.conj()*T).sum(0)
+                print("M.shape = %s"%str(tuple(M.shape)))
+                S = lams[l,l]-M
+                print("S.shape = %s"%str(tuple(S.shape)))
+                self.logdet += torch.log(torch.abs(S)).sum()
+                Sinv = 1/S
+                P = T*Sinv
+                print("P.shape = %s"%str(tuple(P.shape)))
+                C = P[:,None,:]*(T[None,:,:].conj())
+                print("C.shape = %s"%str(tuple(C.shape)))
+                r = A.size(-1)//C.size(-1)
+                ii = torch.arange(A.size(0))
+                jj = torch.arange(A.size(-1))
                 ii0,ii1,ii2 = torch.meshgrid(ii,ii,jj,indexing="ij")
-                ii0,ii1,ii2 = ii0.flatten(),ii1.flatten(),ii2.flatten()
-                jj0 = ii2%t4.size(-1)
-                jj1 = ii2//t4.size(-1)
-                t4[ii0*r+jj1,ii1*r+jj1,jj0] += self.inv[ii0,ii1,ii2]
-                print("l = ",l)
-                print("r = ",r)
-                print("self.inv.shape = %s"%str(tuple(self.inv.shape)))
-                
-                # t4[::r,::r] += self.inv 
-
-                print("b.shape = %s"%str(tuple(b.shape)))
-                print("v.shape = %s"%str(tuple(v.shape)))
-                print("t1.shape = %s"%str(tuple(t1.shape)))
-                print("t2.shape = %s"%str(tuple(t2.shape)))
-                print("s.shape = %s"%str(tuple(s.shape)))
-                print("t3.shape = %s"%str(tuple(t3.shape)))
-                print("t4.shape = %s"%str(tuple(t4.shape)))
-                ur = torch.cat([t4,-t3[:,None,:]],dim=1)
-                br = torch.cat([-t3.conj()[None,:,:],s[None,:,:]],dim=1)
-                self.inv = torch.cat([ur,br],dim=0)
-                print("ur.shape = %s"%str(tuple(ur.shape)))
-                print("br.shape = %s"%str(tuple(br.shape)))
-                print("self.inv.shape = %s"%str(tuple(self.inv.shape)))
+                ii0,ii1,ii2 = ii0.ravel(),ii1.ravel(),ii2.ravel()
+                jj0 = ii2%C.size(-1)
+                jj1 = ii2//C.size(-1)
+                C[ii0*r+jj1,ii1*r+jj1,jj0] += A[ii0,ii1,ii2]
+                ur = torch.cat([C,-P[:,None,:]],dim=1)
+                br = torch.cat([-P.conj()[None,:,:],Sinv[None,None,:]],dim=1)
+                A = torch.cat([ur,br],dim=0)
                 print()
+            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+            if FASTGP_DEBUG=="True":
+                lammats = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
+                for i0 in range(self.fgp.num_tasks):
+                    for i1 in range(i0,self.fgp.num_tasks):
+                        lammats[i0,i1] = (lams[i0,i1].reshape((-1,n[i1],1))*torch.eye(n[i1])).reshape((-1,n[i1]))
+                        if i0==i1: continue 
+                        lammats[i1,i0] = lammats[i0,i1].conj().T
+                lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
+                assert torch.allclose(torch.logdet(lammat),self.logdet)
+                Afull = torch.vstack([torch.hstack([A[i0,i1]*torch.eye(A.size(-1)) for i1 in range(A.size(1))]) for i0 in range(A.size(0))])
+                assert torch.allclose(torch.linalg.inv(lammat),Afull)
+                # TODO: permute self.inv based on level ordering
+                # TODO: Account for index kernel
+                # 
+                # kmat = torch.vstack([
+                #     torch.hstack([self.fgp.kernel(self.fgp.get_x(ell0)[:,None,:],self.fgp.get_x(ell1)[None,:,:]) for ell1 in range(self.fgp.num_tasks)])
+                #     for ell0 in range(self.fgp.num_tasks)])
+                # kmat += self.fgp.noise*torch.eye(kmat.size(0))
+                # kmatinv = torch.linalg.inv(kmat)
             self._freeze()
             self.n = self.fgp.n.clone()
+            self.inv = A
         return self.inv,self.logdet
 
 class _FastMultiTaskGP(torch.nn.Module):
@@ -305,7 +318,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         if isinstance(n,list):
             n = torch.tensor(n,dtype=int)
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all() and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2 greater than the current number of samples"
-        return np.array([self.xxb_seqs[i][self.n[i]:n[i]][0] for i in range(self.num_tasks)],dtype=object)
+        return [self.xxb_seqs[i][self.n[i]:n[i]][0] for i in range(self.num_tasks)]
     def add_y_next(self, y_next):
         """
         Increase the sample size to `n`. 
