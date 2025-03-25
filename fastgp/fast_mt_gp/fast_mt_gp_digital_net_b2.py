@@ -138,47 +138,62 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
-            lengthscales:torch.Tensor = 1, 
-            noise:float = 1e-16, 
+            lengthscales:Union[torch.Tensor,float] = 1, 
+            noise:float = 1e-16,
+            factor_task_kernel:Union[torch.Tensor,int] = 0,
+            noise_task_kernel:Union[torch.Tensor,float] = 1,
             device:torch.device = "cpu",
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x**(1/3)),(lambda x: x**3)),
+            tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
+            requires_grad_factor_task_kernel:bool = True,
+            requires_grad_noise_task_kernel:bool = True,
             compile_fts:bool = False,
             compile_fts_kwargs: dict = {},
             ):
         """
         Args:
-            seqs (Union[qmcpy.DigitalNetB2,int]): digital sequence generator in base $b=2$ with order="NATURAL" and randomize in ["LMS_DS","DS","LMS","FALSE"], where if an int `d` is passed in we use 
+            seqs (Union[List[num_tasks] of qmcpy.DigitalNetB2],int]): list of digital sequence generators in base $b=2$ 
+                with order="NATURAL" and randomize in `["FALSE","DS"]`. If an int `d` is passed in we use 
                 ```python
-                qmcpy.DigitalNetB2(d)
+                [qmcpy.DigitalNetB2(d,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
                 ```
-                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info
+                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info. 
+                If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS_DS"]`. 
             num_tasks (int): number of tasks 
             seed_for_seq (int): seed used for digital net randomization
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
-            lengthscales (torch.Tensor[d]): vector of kernel lengthscales
+            lengthscales (Union[torch.Tensor[d],float]): vector of kernel lengthscales. 
+                If a scalar is passed in then `lengthscales` is set to a constant vector. 
             noise (float): positive noise variance i.e. nugget term
+            factor_task_kernel (Union[Tensor[num_tasks,r],int]): for $F$ the `factor_task_kernel` the task kernel is $FF^T + \\text{diag}(\\boldsymbol{v})$ 
+                where `r<num_tasks` is the rank and $\\boldsymbol{v}$ is the `noise_task_kernel`. If an int `r` is passed in $F$ is initialized to zeros. 
+            noise_task_kernel (Union[torch.Tensor[num_tasks],float]): positive $\\boldsymbol{v}$ in the description of `factor_task_kernel` above. 
+                If a scalar is passed in then `noise_task_kernel` is set to a constant vector. 
             device (torch.device): torch device which is required to support torch.float64
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_factor_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_noise_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
+            requires_grad_factor_task_kernel (bool): wheather or not to optimize the factor for the task kernel
+            requires_grad_noise_task_kernel (bool): wheather or not to optimize the noise for the task kernel
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
         assert isinstance(num_tasks,int) and num_tasks>0
         if isinstance(seqs,int):
-            np_seed_seqs = np.random.SeedSequence(seed_for_seq)
-            seeds = np_seed_seqs.spawn(num_tasks)
-            seqs = [qmcpy.DigitalNetB2(seqs,seed=seeds[i],randomize="DS") for i in range(num_tasks)]
+            seqs = [qmcpy.DigitalNetB2(seqs,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
@@ -196,13 +211,20 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             alpha,
             scale,
             lengthscales,
-            noise,device,
+            noise,
+            factor_task_kernel,
+            noise_task_kernel,
+            device,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
+            tfs_factor_task_kernel,
+            tfs_noise_task_kernel,
             requires_grad_scale,
             requires_grad_lengthscales,
             requires_grad_noise,
+            requires_grad_factor_task_kernel,
+            requires_grad_noise_task_kernel,
             ft,
             ift,
         )

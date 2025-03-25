@@ -122,6 +122,24 @@ class _LamCaches(object):
             self.m_min += 1
         return lam
 
+class _TaskCovCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp 
+        self._freeze()
+        self.num_tasks_range = torch.arange(self.fgp.num_tasks,device=self.fgp.device)
+    def _frozen_equal(self):
+        return (
+            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
+            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
+    def _freeze(self):
+        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
+        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
+    def __call__(self):
+        if not hasattr(self,"kmat") or not self._frozen_equal():
+            self.kmat = self.fgp.factor_task_kernel@self.fgp.factor_task_kernel.T
+            self.kmat[self.num_tasks_range,self.num_tasks_range] += self.fgp.noise_task_kernel
+        return self.kmat
+
 class _YtildeCache(object):
     def __init__(self, fgp, i):
         self.fgp = fgp
@@ -152,21 +170,24 @@ class _InverseLogDetCache(object):
         return (
             (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
             (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
-            (self.fgp.raw_noise==self.raw_noise_freeze).all())
+            (self.fgp.raw_noise==self.raw_noise_freeze).all() and 
+            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all() and 
+            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all())
     def _freeze(self):
         self.raw_scale_freeze = self.fgp.raw_scale.clone()
         self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
         self.raw_noise_freeze = self.fgp.raw_noise.clone()
+        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
+        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
     def __call__(self):
-        # TODO: permute self.inv based on level ordering
-        # TODO: Account for index kernel
         if not hasattr(self,"inv") or (self.n!=self.fgp.n).any() or (not self._frozen_equal()):
+            kmat_tasks = self.fgp.gram_matrix_tasks
             o = self.fgp.task_order
             n = self.fgp.n[o]
             lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
             for i0 in range(self.fgp.num_tasks):
                 for i1 in range(i0,self.fgp.num_tasks):
-                    lams[i0,i1] = self.fgp.get_lam(o[i0],o[i1])
+                    lams[i0,i1] = kmat_tasks[o[i0],o[i1]]*self.fgp.get_lam(o[i0],o[i1])
             self.logdet = torch.log(torch.abs(lams[0,0])).sum()
             A = (1/lams[0,0])[None,None,:]
             for l in range(1,self.fgp.num_tasks):
@@ -215,13 +236,19 @@ class _FastMultiTaskGP(torch.nn.Module):
         scale,
         lengthscales,
         noise,
+        factor_task_kernel,
+        noise_task_kernel,
         device,
         tfs_scale,
         tfs_lengthscales,
         tfs_noise,
+        tfs_factor_task_kernel,
+        tfs_noise_task_kernel,
         requires_grad_scale, 
         requires_grad_lengthscales, 
-        requires_grad_noise, 
+        requires_grad_noise,
+        requires_grad_factor_task_kernel,
+        requires_grad_noise_task_kernel,
         ft,
         ift,
         ):
@@ -253,8 +280,20 @@ class _FastMultiTaskGP(torch.nn.Module):
         assert np.isscalar(noise) and noise>0, "noise should be a positive float"
         noise = torch.tensor(noise,device=self.device)
         assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
+        assert (isinstance(factor_task_kernel,int) and 0<=factor_task_kernel<=self.num_tasks) or (isinstance(factor_task_kernel,torch.Tensor) and factor_task_kernel.ndim==2 and factor_task_kernel.size(0)==self.num_tasks and factor_task_kernel.size(1)<=self.num_tasks), "factor_task_kernel should be a non-negative int less than num_tasks or a num_tasks x r torch.Tensor with r<=num_tasks" 
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
+        if isinstance(factor_task_kernel,int):
+            factor_task_kernel = torch.zeros((self.num_tasks,factor_task_kernel),device=self.device)
+        assert len(tfs_factor_task_kernel)==2 and callable(tfs_factor_task_kernel[0]) and callable(tfs_factor_task_kernel[1]), "tfs_factor_task_kernel should be a tuple of two callables, the transform and inverse transform"
+        self.tf_factor_task_kernel = tfs_factor_task_kernel[1]
+        self.raw_factor_task_kernel = torch.nn.Parameter(tfs_factor_task_kernel[0](factor_task_kernel),requires_grad=requires_grad_factor_task_kernel)
+        assert (np.isscalar(noise_task_kernel) and noise_task_kernel>0) or (isinstance(noise_task_kernel,torch.Tensor) and noise_task_kernel.shape==(self.num_tasks,) and (noise_task_kernel>0).all()), "noise_task_kernel should be a scalar or torch.Tensor of length num_tasks and must be positive"
+        if np.isscalar(noise_task_kernel):
+            noise_task_kernel = noise_task_kernel*torch.ones(self.num_tasks,device=self.device)
+        assert len(tfs_noise_task_kernel)==2 and callable(tfs_noise_task_kernel[0]) and callable(tfs_noise_task_kernel[1]), "tfs_noise_task_kernel should be a tuple of two callables, the transform and inverse transform"
+        self.tf_noise_task_kernel = tfs_noise_task_kernel[1]
+        self.raw_noise_task_kernel = torch.nn.Parameter(tfs_noise_task_kernel[0](noise_task_kernel),requires_grad=requires_grad_noise_task_kernel)
         self.ft = ft
         self.ift = ift
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
@@ -262,6 +301,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.lam_caches = np.array([[_LamCaches(self,i0,i1) for i1 in range(self.num_tasks)] for i0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
         self.inv_log_det_cache = _InverseLogDetCache(self)
+        self.task_cov_cache = _TaskCovCache(self)
     def get_x(self, task):
         assert 0<=task<self.num_tasks
         x,xb = self.xxb_seqs[task][:self.n[task]]
@@ -302,8 +342,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         z = torch.cat(zsp,dim=-1).transpose(dim0=-2,dim1=-1)
         FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
         if FASTGP_DEBUG=="True":
+            kmat_tasks = self.gram_matrix_tasks
             kmat = torch.vstack([
-                torch.hstack([self.kernel(self.get_x(ell0)[:,None,:],self.get_x(ell1)[None,:,:]) for ell1 in range(self.num_tasks)])
+                torch.hstack([kmat_tasks[ell0,ell1]*self.kernel(self.get_x(ell0)[:,None,:],self.get_x(ell1)[None,:,:]) for ell1 in range(self.num_tasks)])
                 for ell0 in range(self.num_tasks)])
             kmat += self.noise*torch.eye(kmat.size(0))
             assert torch.allclose(logdet,torch.logdet(kmat))
@@ -321,12 +362,21 @@ class _FastMultiTaskGP(torch.nn.Module):
     @property
     def noise(self):
         return self.tf_noise(self.raw_noise)
+    @property
+    def factor_task_kernel(self):
+        return self.tf_factor_task_kernel(self.raw_factor_task_kernel)
+    @property
+    def noise_task_kernel(self):
+        return self.tf_noise_task_kernel(self.raw_noise_task_kernel)
     @property 
     def task_order(self):
         return self.n.argsort(descending=True)
     @property
     def inv_task_order(self):
         return self.task_order.argsort()
+    @property 
+    def gram_matrix_tasks(self):
+        return self.task_cov_cache()
     def get_x_next(self, n):
         """
         Get next sampling locations. 

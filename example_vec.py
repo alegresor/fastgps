@@ -8,11 +8,12 @@ os.environ["FASTGP_DEBUG"] = "True"
 torch.set_default_dtype(torch.float64)
 
 d = 5
-num_tasks = 3
+num_tasks = 4
 fs = [
     lambda x: torch.sin(x).sum(1),
     lambda x: torch.cos(x).sum(1),
     lambda x: torch.tan(x).sum(1),
+    lambda x: torch.arctan(x).sum(1),
 ]
 
 fgps = [
@@ -26,7 +27,7 @@ for fgp in fgps:
     # y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     # fgp.add_y_next(y_next)
 
-    x_next = fgp.get_x_next(n=[2**2,2**3,2**1])
+    x_next = fgp.get_x_next(n=[2**5,2**8,2**10,2**3])
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
     

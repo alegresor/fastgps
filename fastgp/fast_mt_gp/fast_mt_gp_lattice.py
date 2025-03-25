@@ -157,47 +157,61 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
-            lengthscales:torch.Tensor = 1, 
+            lengthscales:Union[torch.Tensor,float] = 1, 
             noise:float = 1e-8, 
+            factor_task_kernel:Union[torch.Tensor,int] = 0, 
+            noise_task_kernel:Union[torch.Tensor,float] = 1,
             device:torch.device = "cpu",
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x**(1/3)),(lambda x: x**3)),
+            tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
+            requires_grad_factor_task_kernel:bool = True,
+            requires_grad_noise_task_kernel:bool = True,
             compile_fts:bool = False,
             compile_fts_kwargs:dict = {},
             ):
         """
         Args:
-            seqs (Union[qmcpy.Lattice,int]): lattice generator with order="NATURAL" and randomize in ["SHIFT","FALSE"], where if an int `d` is passed in we use
+            seqs (Union[List[num_tasks] of qmcpy.Lattice],int]): list of lattice sequence generators
+                with order="NATURAL" and randomize in `["FALSE","SHIFT"]`. If an int `d` is passed in we use 
                 ```python
-                qmcpy.Lattice(d)
+                [qmcpy.Lattice(d,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.lattice.lattice" target="_blank">`qmcpy.Lattice` docs</a> for more info
             num_tasks (int): number of tasks
             seed_for_seq (int): seed used for lattice randomization
             alpha (int): smoothness parameter
             scale (float): kernel global scaling parameter
-            lengthscales (torch.Tensor[d]): vector of kernel lengthscales
+            lengthscales (Union[torch.Tensor[d],float]): vector of kernel lengthscales. 
+                If a scalar is passed in then `lengthscales` is set to a constant vector. 
             noise (float): positive noise variance i.e. nugget term
+            factor_task_kernel (Union[Tensor[num_tasks,r],int]): for $F$ the `factor_task_kernel` the task kernel is $FF^T + \\text{diag}(\\boldsymbol{v})$ 
+                where `r<num_tasks` is the rank and $\\boldsymbol{v}$ is the `noise_task_kernel`. If an int `r` is passed in $F$ is initialized to zeros. 
+            noise_task_kernel (Union[torch.Tensor[num_tasks],float]): positive $\\boldsymbol{v}$ in the description of `factor_task_kernel` above. 
+                If a scalar is passed in then `noise_task_kernel` is set to a constant vector.
             device (torch.device): torch device which is required to support torch.float64
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_factor_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_noise_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
+            requires_grad_factor_task_kernel (bool): wheather or not to optimize the factor for the task kernel
+            requires_grad_noise_task_kernel (bool): wheather or not to optimize the noise for the task kernel
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fftbr_torch,**compile_fts)` and `torch.compile(qmcpy.ifftbr_torch,**compile_fts)`, otherwise use the uncompiled versions
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
         assert isinstance(num_tasks,int) and num_tasks>0
         if isinstance(seqs,int):
-            np_seed_seqs = np.random.SeedSequence(seed_for_seq)
-            seeds = np_seed_seqs.spawn(num_tasks)
-            seqs = [qmcpy.Lattice(seqs,seed=seeds[i]) for i in range(num_tasks)]
+            seqs = [qmcpy.Lattice(seqs,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
@@ -214,13 +228,20 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             alpha,
             scale,
             lengthscales,
-            noise,device,
+            noise,
+            factor_task_kernel,
+            noise_task_kernel,
+            device,
             tfs_scale,
             tfs_lengthscales,
             tfs_noise,
+            tfs_factor_task_kernel,
+            tfs_noise_task_kernel,
             requires_grad_scale,
             requires_grad_lengthscales,
             requires_grad_noise,
+            requires_grad_factor_task_kernel,
+            requires_grad_noise_task_kernel,
             ft,
             ift,
         )

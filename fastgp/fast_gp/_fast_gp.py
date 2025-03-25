@@ -245,7 +245,8 @@ class _FastGP(torch.nn.Module):
         Increase the sample size to `n`. 
 
         Args:
-            n (int): number of points to increase the sample size to
+            y_next (torch.Tensor[...,n[i]-self.n[i]]): new function evaluations
+     
         """
         if not hasattr(self,"y"):
             self.y = y_next
