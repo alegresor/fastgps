@@ -67,14 +67,23 @@ class _LamCaches(object):
         assert isinstance(m,int)
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
-            #assert self.fgp.n[self.i0]>0 and self.fgp.n[self.i1]>0
             k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.i0,self.i1))
-            k1[0] += self.fgp.noise
+            if self.i0==self.i1:
+                k1[0] += self.fgp.noise
             self.lam_list = [np.sqrt(self.fgp.n[self.i1])*self.fgp.ft(k1)]
+            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
+            if FASTGP_DEBUG=="True":
+                kfull = self.fgp.kernel(self.fgp.get_x(self.i0)[:,None,:],self.fgp.get_x(self.i1)[None,:,:])
+                if self.i0==self.i1:
+                    kfull += self.fgp.noise*torch.eye(kfull.size(0))
+                lamfullhat = self.fgp.ft(self.fgp.ft(kfull.T).conj().T).conj()
+                lamfull = (self.lam_list[0].reshape((-1,self.fgp.n[self.i1],1))*torch.eye(self.fgp.n[self.i1])).reshape((self.fgp.n[self.i0],self.fgp.n[self.i1]))
+                assert torch.allclose(lamfullhat,lamfull)
             self._freeze(0)
             self.m_min = self.m_max = self.fgp.m(self.i0)
             return self.lam_list[0]
         if m==self.m_min:
+            assert False, r"account for sqrt(2^{m_\ell'})"
             if not self._frozen_equal(0):
                 k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][:2**self.m_min])
                 k1[0] += self.fgp.noise
@@ -82,6 +91,7 @@ class _LamCaches(object):
                 self._freeze(0)
             return self.lam_list[0]
         if m>self.m_max:
+            assert False, r"account for sqrt(2^{m_\ell'})"
             self.lam_list += [torch.empty(2**mm,dtype=self.fgp._FTOUTDTYPE) for mm in range(self.m_max+1,m+1)]
             self.raw_scale_freeze_list += [torch.empty_like(self.raw_scale_freeze_list[0])]*(m-self.m_max)
             self.raw_lengthscales_freeze_list += [torch.empty_like(self.raw_lengthscales_freeze_list[0])]*(m-self.m_max)
@@ -148,6 +158,8 @@ class _InverseLogDetCache(object):
         self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
         self.raw_noise_freeze = self.fgp.raw_noise.clone()
     def __call__(self):
+        # TODO: permute self.inv based on level ordering
+        # TODO: Account for index kernel
         if not hasattr(self,"inv") or (self.n!=self.fgp.n).any() or (not self._frozen_equal()):
             o = self.fgp.task_order
             n = self.fgp.n[o]
@@ -155,28 +167,18 @@ class _InverseLogDetCache(object):
             for i0 in range(self.fgp.num_tasks):
                 for i1 in range(i0,self.fgp.num_tasks):
                     lams[i0,i1] = self.fgp.get_lam(o[i0],o[i1])
-                    print(i0,i1,lams[i0,i1].shape)
             self.logdet = torch.log(torch.abs(lams[0,0])).sum()
             A = (1/lams[0,0])[None,None,:]
-            print()
             for l in range(1,self.fgp.num_tasks):
-                print("A.shape = %s"%str(tuple(A.shape)))
                 B = torch.cat([lams[k,l] for k in range(l)],dim=0).reshape((-1,n[l]))
-                print("B.shape = %s"%str(tuple(B.shape)))
                 Bvec = B.reshape((A.size(1),-1))
-                print("Bvec.shape = %s"%str(tuple(Bvec.shape)))
                 T = (Bvec*A).sum(1).reshape((-1,n[l]))
-                print("T.shape = %s"%str(tuple(T.shape)))
                 M = (B.conj()*T).sum(0)
-                print("M.shape = %s"%str(tuple(M.shape)))
                 S = lams[l,l]-M
-                print("S.shape = %s"%str(tuple(S.shape)))
                 self.logdet += torch.log(torch.abs(S)).sum()
                 Sinv = 1/S
                 P = T*Sinv
-                print("P.shape = %s"%str(tuple(P.shape)))
                 C = P[:,None,:]*(T[None,:,:].conj())
-                print("C.shape = %s"%str(tuple(C.shape)))
                 r = A.size(-1)//C.size(-1)
                 ii = torch.arange(A.size(0))
                 jj = torch.arange(A.size(-1))
@@ -188,7 +190,6 @@ class _InverseLogDetCache(object):
                 ur = torch.cat([C,-P[:,None,:]],dim=1)
                 br = torch.cat([-P.conj()[None,:,:],Sinv[None,None,:]],dim=1)
                 A = torch.cat([ur,br],dim=0)
-                print()
             FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
             if FASTGP_DEBUG=="True":
                 lammats = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
@@ -198,17 +199,14 @@ class _InverseLogDetCache(object):
                         if i0==i1: continue 
                         lammats[i1,i0] = lammats[i0,i1].conj().T
                 lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
-                assert torch.allclose(torch.logdet(lammat),self.logdet)
+                assert torch.allclose(torch.abs(torch.logdet(lammat)),self.logdet)
                 Afull = torch.vstack([torch.hstack([A[i0,i1]*torch.eye(A.size(-1)) for i1 in range(A.size(1))]) for i0 in range(A.size(0))])
                 assert torch.allclose(torch.linalg.inv(lammat),Afull)
-                # TODO: permute self.inv based on level ordering
-                # TODO: Account for index kernel
-                # 
-                # kmat = torch.vstack([
-                #     torch.hstack([self.fgp.kernel(self.fgp.get_x(ell0)[:,None,:],self.fgp.get_x(ell1)[None,:,:]) for ell1 in range(self.fgp.num_tasks)])
-                #     for ell0 in range(self.fgp.num_tasks)])
-                # kmat += self.fgp.noise*torch.eye(kmat.size(0))
-                # kmatinv = torch.linalg.inv(kmat)
+                kmat = torch.vstack([
+                    torch.hstack([self.fgp.kernel(self.fgp.get_x(ell0)[:,None,:],self.fgp.get_x(ell1)[None,:,:]) for ell1 in range(self.fgp.num_tasks)])
+                    for ell0 in range(self.fgp.num_tasks)])
+                kmat += self.fgp.noise*torch.eye(kmat.size(0))
+                assert torch.allclose(self.logdet,torch.logdet(kmat))
             self._freeze()
             self.n = self.fgp.n.clone()
             self.inv = A

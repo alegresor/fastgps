@@ -178,7 +178,7 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         if isinstance(seqs,int):
             np_seed_seqs = np.random.SeedSequence(seed_for_seq)
             seeds = np_seed_seqs.spawn(num_tasks)
-            seqs = [qmcpy.DigitalNetB2(seqs,seed=seeds[i]) for i in range(num_tasks)]
+            seqs = [qmcpy.DigitalNetB2(seqs,seed=seeds[i],randomize="DS") for i in range(num_tasks)]
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
@@ -186,10 +186,10 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         assert all(seqs[i].t_lms<64 for i in range(num_tasks)), "each seq must have t_lms<64"
-        assert all(seqs[i].randomize in ['LMS_DS','DS','LMS','FALSE'] for i in range(num_tasks)), "each seq should have randomize in ['LMS_DS','DS','LMS','FALSE']"
+        assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
         assert all(seqs[i].t_lms==seqs[0].t_lms for i in range(num_tasks)), "all seqs should have the same t_lms"
-        self.t = seqs[0].t_lms 
-        ft = ift = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
+        self.t = seqs[0].t_lms
+        ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
             seqs,
             num_tasks,
