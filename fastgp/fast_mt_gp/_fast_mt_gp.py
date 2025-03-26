@@ -84,7 +84,7 @@ class _LamCaches(object):
                 lamfull = (self.lam_list[0].reshape((-1,self.fgp.n[self.i1],1))*torch.eye(self.fgp.n[self.i1])).reshape((self.fgp.n[self.i0],self.fgp.n[self.i1]))
                 assert torch.allclose(lamfullhat,lamfull)
             self._freeze(0)
-            self.m_min = self.m_max = self.fgp.m(self.i0)
+            self.m_min = self.m_max = self.fgp.m[self.i0]
             return self.lam_list[0]
         if m==self.m_min:
             if not self._frozen_equal(0) or self._force_recompile():
@@ -116,7 +116,7 @@ class _LamCaches(object):
         return self.lam_list[midx]
     def __getitem__(self, m):
         lam = self.__getitem__no_delete(m)
-        while self.m_min<self.fgp.m(self.i0):
+        while self.m_min<self.fgp.m[self.i0]:
             del self.lam_list[0]
             del self.raw_scale_freeze_list[0]
             del self.raw_lengthscales_freeze_list[0]
@@ -302,6 +302,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         assert all(seqs[i].d==self.d for i in range(self.num_tasks))
         self.seqs = seqs
         self.n = torch.zeros(self.num_tasks,dtype=int)
+        self.m = -1*torch.ones(self.num_tasks,dtype=int)
+        self.task_order = torch.arange(self.num_tasks)
+        self.inv_task_order = torch.arange(self.num_tasks)
         assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self,d,)), "alpha should be an int or a torch.Tensor of length d"
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
@@ -345,27 +348,55 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.inv_log_det_cache = _InverseLogDetCache(self)
         self.task_cov_cache = _TaskCovCache(self)
         self.coeffs_cache = _CoeffsCache(self)
-    def get_x(self, task):
+    @property
+    def scale(self):
+        return self.tf_scale(self.raw_scale)
+    @property
+    def lengthscales(self):
+        return self.tf_lengthscales(self.raw_lengthscales)
+    @property
+    def noise(self):
+        return self.tf_noise(self.raw_noise)
+    @property
+    def factor_task_kernel(self):
+        return self.tf_factor_task_kernel(self.raw_factor_task_kernel)
+    @property
+    def noise_task_kernel(self):
+        return self.tf_noise_task_kernel(self.raw_noise_task_kernel)
+    @property 
+    def gram_matrix_tasks(self):
+        return self.task_cov_cache()
+    @property 
+    def coeffs(self):
+        return self.coeffs_cache()
+    def get_x(self, task, n=None):
         assert 0<=task<self.num_tasks
-        x,xb = self.xxb_seqs[task][:self.n[task]]
+        if n is None: n = self.n[task]
+        assert n>=0
+        x,xb = self.xxb_seqs[task][:n]
         return x
-    def get_xb(self, task):
+    def get_xb(self, task, n=None):
         assert 0<=task<self.num_tasks
-        x,xb = self.xxb_seqs[task][:self.n[task]]
+        if n is None: n = self.n[task]
+        assert n>=0
+        x,xb = self.xxb_seqs[task][:n]
         return xb
-    def get_lam(self, task0, task1):
+    def get_lam(self, task0, task1, n=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks
-        return self.lam_caches[task0,task1][self.m(task0)]
-    def get_k1parts(self, task0, task1):
+        if n is None: m = int(self.m[task0])
+        else: m = -1 if n==0 else int(np.log2(int(n)))
+        assert m>=0
+        return self.lam_caches[task0,task1][m]
+    def get_k1parts(self, task0, task1, n=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks
-        return self.k1parts_seq[task0,task1][:self.n[task0]]
+        if n is None: n = self.n[task0]
+        assert n>=0
+        return self.k1parts_seq[task0,task1][:n]
     def get_ytilde(self, task):
         assert 0<=task<self.num_tasks
         return self.ytilde_cache[task]()
-    def m(self, task):
-        return -1 if self.n[task]==0 else int(np.log2(self.n[task].item()))
     def get_inv_log_det(self):
         return self.inv_log_det_cache()
     def gram_matrix_solve(self, y):
@@ -401,33 +432,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
         return zst,logdet
-    @property
-    def scale(self):
-        return self.tf_scale(self.raw_scale)
-    @property
-    def lengthscales(self):
-        return self.tf_lengthscales(self.raw_lengthscales)
-    @property
-    def noise(self):
-        return self.tf_noise(self.raw_noise)
-    @property
-    def factor_task_kernel(self):
-        return self.tf_factor_task_kernel(self.raw_factor_task_kernel)
-    @property
-    def noise_task_kernel(self):
-        return self.tf_noise_task_kernel(self.raw_noise_task_kernel)
-    @property 
-    def task_order(self):
-        return self.n.argsort(descending=True)
-    @property
-    def inv_task_order(self):
-        return self.task_order.argsort()
-    @property 
-    def gram_matrix_tasks(self):
-        return self.task_cov_cache()
-    @property 
-    def coeffs(self):
-        return self.coeffs_cache()
+    
     def get_x_next(self, n):
         """
         Get next sampling locations. 
@@ -458,6 +463,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.d_out = self.y[0][...,0].numel()
         self.n = torch.tensor([self.y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
         assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
+        self.m = torch.where(self.n==0,-1,torch.log2(self.n)).to(int)
+        self.task_order = self.n.argsort(descending=True)
+        self.inv_task_order = self.task_order.argsort()
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
