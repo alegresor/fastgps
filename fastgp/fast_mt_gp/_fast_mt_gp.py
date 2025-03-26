@@ -238,6 +238,36 @@ class _InverseLogDetCache(object):
             self.inv = A
         return self.inv,self.logdet
 
+class _CoeffsCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp
+    def _frozen_equal(self):
+        return (
+            (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
+            (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
+            (self.fgp.raw_noise==self.raw_noise_freeze).all() and 
+            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
+            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
+    def _force_recompile(self):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
+            self.fgp.raw_scale.requires_grad or 
+            self.fgp.raw_lengthscales.requires_grad or 
+            self.fgp.raw_noise.requires_grad or 
+            self.fgp.raw_factor_task_kernel.requires_grad or 
+            self.fgp.raw_noise_task_kernel.requires_grad)
+    def _freeze(self):
+        self.raw_scale_freeze = self.fgp.raw_scale.clone()
+        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
+        self.raw_noise_freeze = self.fgp.raw_noise.clone()
+        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
+        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
+    def __call__(self):
+        if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
+            self.coeffs = self.fgp.gram_matrix_solve(torch.cat(self.fgp.y,dim=0))
+            self._freeze()
+            self.n = self.fgp.n.clone()
+        return self.coeffs 
+
 class _FastMultiTaskGP(torch.nn.Module):
     def __init__(self,
         seqs,
@@ -290,9 +320,11 @@ class _FastMultiTaskGP(torch.nn.Module):
         assert np.isscalar(noise) and noise>0, "noise should be a positive float"
         noise = torch.tensor(noise,device=self.device)
         assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
-        assert (isinstance(factor_task_kernel,int) and 0<=factor_task_kernel<=self.num_tasks) or (isinstance(factor_task_kernel,torch.Tensor) and factor_task_kernel.ndim==2 and factor_task_kernel.size(0)==self.num_tasks and factor_task_kernel.size(1)<=self.num_tasks), "factor_task_kernel should be a non-negative int less than num_tasks or a num_tasks x r torch.Tensor with r<=num_tasks" 
+        assert factor_task_kernel is None or (isinstance(factor_task_kernel,int) and 0<=factor_task_kernel<=self.num_tasks) or (isinstance(factor_task_kernel,torch.Tensor) and factor_task_kernel.ndim==2 and factor_task_kernel.size(0)==self.num_tasks and factor_task_kernel.size(1)<=self.num_tasks), "factor_task_kernel should be a non-negative int less than num_tasks or a num_tasks x r torch.Tensor with r<=num_tasks" 
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
+        if factor_task_kernel is None:
+            factor_task_kernel = self.num_tasks
         if isinstance(factor_task_kernel,int):
             factor_task_kernel = torch.ones((self.num_tasks,factor_task_kernel),device=self.device)
         assert len(tfs_factor_task_kernel)==2 and callable(tfs_factor_task_kernel[0]) and callable(tfs_factor_task_kernel[1]), "tfs_factor_task_kernel should be a tuple of two callables, the transform and inverse transform"
@@ -312,13 +344,14 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
         self.inv_log_det_cache = _InverseLogDetCache(self)
         self.task_cov_cache = _TaskCovCache(self)
+        self.coeffs_cache = _CoeffsCache(self)
     def get_x(self, task):
         assert 0<=task<self.num_tasks
         x,xb = self.xxb_seqs[task][:self.n[task]]
         return x
     def get_xb(self, task):
         assert 0<=task<self.num_tasks
-        x,xb = self.xxb_seq[task][:self.n[task]]
+        x,xb = self.xxb_seqs[task][:self.n[task]]
         return xb
     def get_lam(self, task0, task1):
         assert 0<=task0<self.num_tasks
@@ -392,6 +425,9 @@ class _FastMultiTaskGP(torch.nn.Module):
     @property 
     def gram_matrix_tasks(self):
         return self.task_cov_cache()
+    @property 
+    def coeffs(self):
+        return self.coeffs_cache()
     def get_x_next(self, n):
         """
         Get next sampling locations. 
@@ -440,7 +476,7 @@ class _FastMultiTaskGP(torch.nn.Module):
             kmat (torch.Tensor[N,M]): matrix of kernel evaluations
         """
         return self._kernel_from_parts(self._kernel_parts(x,z))
-    def post_mean(self, x:torch.Tensor, eval:bool=True):
+    def post_mean(self, x:torch.Tensor, tasks:torch.Tensor=None, eval:bool=True):
         """
         Posterior mean. 
 
@@ -453,11 +489,15 @@ class _FastMultiTaskGP(torch.nn.Module):
         """
         if eval:
             coeffs = self.coeffs
+            kmat_tasks = self.gram_matrix_tasks
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        k = self.kernel(x[:,None,:],self.xb[None,:self.n,:])
-        pmean = torch.einsum("il,...l->...i",k,coeffs)
+        if tasks is None: tasks = torch.arange(self.num_tasks)
+        assert tasks.ndim==1 and (tasks>=0).all() and (tasks<self.num_tasks).all()
+        kmat_tasks_keep = kmat_tasks[tasks]
+        kmat = torch.cat([self.kernel(x[:,None,:],self.get_xb(l)[None,:,:])*kmat_tasks_keep[:,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        pmean = torch.einsum("til,...l->...ti",kmat,coeffs)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean
@@ -498,7 +538,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return kmat
-    def post_var(self, x:torch.Tensor, n:int=None, eval:bool=True):
+    def post_var(self, x:torch.Tensor, tasks:torch.Tensor=None, n:int=None, eval:bool=True):
         """
         Posterior variance. Forced to be non-negative.  
 
@@ -511,22 +551,28 @@ class _FastMultiTaskGP(torch.nn.Module):
             pvar (torch.Tensor[N]): posterior variance vector
         """
         if n is None: n = self.n
-        assert isinstance(n,int) and n&(n-1)==0 and n>=self.n, "require n is an int power of two greater than or equal to self.n"
-        m = int(np.log2(n))
+        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n is an int power of two greater than or equal to self.n"
+        assert (n==self.n).all(), "TODO: enable future projections of variance and covariance"
+        #m = int(np.log2(n))
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        _,self__x = self.xxb_seq[:2**m]
-        lam = self.lam_caches[m]
+        #_,self__x = self.xxb_seq[:2**m]
+        #lam = self.lam_caches[m]
         if eval:
+            kmat_tasks = self.gram_matrix_tasks
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
-        k = self.kernel(x,x)
-        k1t = self.ft(self.kernel(x[:,None,:],self__x[None,:,:]))
-        diag = k-torch.einsum("il,il->i",k1t.conj(),k1t/lam).real
+        if tasks is None: tasks = torch.arange(self.num_tasks)
+        assert tasks.ndim==1 and (tasks>=0).all() and (tasks<self.num_tasks).all()
+        kmat_tasks_keep = kmat_tasks[tasks]
+        kmat_new = self.kernel(x,x)*kmat_tasks[tasks,tasks,None]
+        kmat = torch.cat([self.kernel(x[:,None,:],self.get_xb(l)[None,:,:])*kmat_tasks_keep[:,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        t = self.gram_matrix_solve(kmat.transpose(dim0=-2,dim1=-1)).transpose(dim0=-2,dim1=-1)
+        diag = kmat_new-torch.einsum("til,til->ti",t,kmat)
         diag[diag<0] = 0 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return diag
-    def post_ci(self, x, confidence:float=0.99, eval:bool=True):
+    def post_ci(self, x, tasks:torch.Tensor=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior credible interval.
 
@@ -550,8 +596,8 @@ class _FastMultiTaskGP(torch.nn.Module):
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
-        pmean = self.post_mean(x) 
-        pvar = self.post_var(x)
+        pmean = self.post_mean(x,tasks) 
+        pvar = self.post_var(x,tasks)
         pstd = torch.sqrt(pvar)
         ci_low = pmean-q*pstd 
         ci_high = pmean+q*pstd
@@ -634,14 +680,14 @@ class _FastMultiTaskGP(torch.nn.Module):
     def fit(self,
         iterations:int = 5000,
         optimizer:torch.optim.Optimizer = None,
-        lr:float = 1e-2,
+        lr:float = 1e-1,
         store_mll_hist:bool = True, 
         store_scale_hist:bool = True, 
         store_lengthscales_hist:bool = True,
         store_noise_hist:bool = True,
-        verbose:int = 5,
+        verbose:int = 1,
         verbose_indent:int = 4,
-        stop_crit_improvement_threshold:float = 1e1,
+        stop_crit_improvement_threshold:float = 1e0,
         stop_crit_wait_iterations:int = 10,
         ):
         """
@@ -691,7 +737,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         if store_noise_hist:
             noise_hist = torch.empty(iterations+1)
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s | %-s"%("iter of %.1e"%iterations,"NMLL","noise","scale","lengthscales")
+            _s = "%16s | %-10s | %-10s | %-10s | %-20s | %-s "%("iter of %.1e"%iterations,"NMLL","noise","scale","lengthscales","task_kernel")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
@@ -702,6 +748,8 @@ class _FastMultiTaskGP(torch.nn.Module):
         ytildescat = torch.cat(ytildes,dim=-1)
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         for i in range(iterations+1):
+            if i==iterations:
+                pass
             ztildes,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
             ztildescat = torch.cat(ztildes,dim=-1)
             term1 = (ytildescat*ztildescat).real.sum()
@@ -724,9 +772,9 @@ class _FastMultiTaskGP(torch.nn.Module):
             if store_noise_hist:
                 noise_hist[i] = self.noise.item()
             if verbose and (i%verbose==0 or break_condition):
-                with np.printoptions(formatter={"float":lambda x: "%.2e"%x},threshold=6,edgeitems=3):
-                    _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-s"%\
-                        (i,mll.item(),self.noise.item(),self.scale.item(),str(self.lengthscales.detach().cpu().numpy()))
+                with np.printoptions(formatter={"float":lambda x: "%.1e"%x},threshold=6,edgeitems=3):
+                    _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-20s | %-s"%\
+                        (i,mll.item(),self.noise.item(),self.scale.item(),str(self.lengthscales.detach().cpu().numpy()),str(self.gram_matrix_tasks.detach().cpu().numpy()).replace("\n",""))
                 print(" "*verbose_indent+_s)
             if break_condition: break
             mll.backward()#retain_graph=True)

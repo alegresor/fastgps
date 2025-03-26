@@ -140,7 +140,7 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1, 
             noise:float = 1e-16,
-            factor_task_kernel:Union[torch.Tensor,int] = 1,
+            factor_task_kernel:Union[torch.Tensor,int] = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1,
             device:torch.device = "cpu",
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),

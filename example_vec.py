@@ -1,56 +1,69 @@
 import fastgp
 import torch
-
+from matplotlib import pyplot
 import os
-#os.environ["FASTGP_DEBUG"] = "True"
-
-#torch.autograd.set_detect_anomaly(True)
+import pandas as pd 
+import numpy as np 
 
 torch.set_default_dtype(torch.float64)
+#os.environ["FASTGP_DEBUG"] = "True"
+torch.autograd.set_detect_anomaly(True)
+
+colors = ["xkcd:"+color[:-1] for color in pd.read_csv("./xkcd_colors.txt",comment="#").iloc[:,0].tolist()][::-1]
+_alpha = 0.25
+
+def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
+    # https://www.sfu.ca/~ssurjano/ackley.html
+    assert x.ndim==2
+    x = 2*scaling*x-scaling
+    t1 = a*torch.exp(-b*torch.sqrt(torch.mean(x**2,1)))
+    t2 = torch.exp(torch.mean(torch.cos(c*x),1))
+    t3 = a+np.exp(1)
+    y = -t1-t2+t3
+    return y
 
 d = 1
-num_tasks = 3
 fs = [
-    lambda x: torch.sin(x).sum(1),
-    lambda x: torch.cos(x).sum(1),
-    lambda x: torch.tan(x).sum(1),
-    lambda x: torch.arctan(x).sum(1),
+    lambda x: f_ackley(x,c=0),
+    #lambda x: torch.cos(2*np.pi*x).sum(1),
+    lambda x: f_ackley(x),
 ]
+n = [2**4,2**2]
+num_tasks = len(n)
 
-fgps = [
-    fastgp.FastMultiTaskGPDigitalNetB2(
-        seqs=d,
-        seed_for_seq=7,
-        num_tasks=num_tasks,
-        requires_grad_factor_task_kernel=True,
-        requires_grad_noise_task_kernel=True,
-    ),
-    fastgp.FastMultiTaskGPLattice(
-        seqs=d,
-        seed_for_seq=7,
-        num_tasks=num_tasks,
-        requires_grad_factor_task_kernel=True,
-        requires_grad_noise_task_kernel=True,
-    ),
-]
 
-for fgp in fgps:
-    print(fgp)
-    # x_next = fgp.get_x_next(n=[4,2,1])
-    # y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
-    # fgp.add_y_next(y_next)
+fgp_indep = fastgp.FastMultiTaskGPDigitalNetB2(seqs=d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
+#fgp_indep = fastgp.FastMultiTaskGPLattice(seqs=d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
 
-    x_next = fgp.get_x_next(n=[2**8,2**6,2**3])
+fgp_multitask = fastgp.FastMultiTaskGPDigitalNetB2(seqs=d,seed_for_seq=7,num_tasks=num_tasks)
+#fgp_multitask = fastgp.FastMultiTaskGPLattice(seqs=d,seed_for_seq=7,num_tasks=num_tasks,requires_grad_lengthscales=False)
+
+xticks = torch.linspace(0,1,101)[1:-1,None]
+yticks = torch.vstack([fs[i](xticks) for i in range(num_tasks)])
+fig,ax = pyplot.subplots(nrows=2,ncols=num_tasks,figsize=(10,5),sharex=True,sharey="col")
+ax = np.atleast_1d(ax).reshape((2,num_tasks))
+for i,fgp in enumerate([fgp_indep,fgp_multitask]):
+    x_next = fgp.get_x_next(n=n)
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
-    
-    #t = fgp.gram_matrix_solve(torch.rand(4,5,fgp.n.sum(),3))
-    
     fgp.fit(
-        #optimizer = torch.optim.Adam(fgp.parameters(),lr=1,amsgrad=True),
-        verbose=10,
-        #lr=1e-2
+        #iterations=30,
+        #lr=1e-3,
+        #optimizer=torch.optim.Adam(fgp.parameters(),lr=1e-1,amsgrad=True),
     )
+    pmean,pvar,q,ci_low,ci_high = fgp.post_ci(xticks)
+    for l in range(num_tasks):
+        ax[i,l].plot(xticks[:,0],yticks[l],color="k")
+        ax[i,l].plot(xticks[:,0],pmean[l],color=colors[i])
+        ax[i,l].fill_between(xticks[:,0],ci_low[l],ci_high[l],color=colors[i],alpha=_alpha)
+        ax[i,l].scatter(fgp.get_x(l)[:,0],fgp.y[l],color="k")
+ax[0,0].set_ylabel("FGP Independent")
+ax[1,0].set_ylabel("FGP Multitask")
+for l in range(num_tasks):
+    ax[0,l].set_title("Task %d"%l)
+fig.tight_layout()
+fig.savefig("example_vec.pdf")
+
 # fgp.fit(iterations=10)
 
 # x_next = fgp.get_x_next(n=32)
