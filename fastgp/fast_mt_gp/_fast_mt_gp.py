@@ -59,6 +59,11 @@ class _LamCaches(object):
             (self.fgp.raw_scale==self.raw_scale_freeze_list[i]).all() and 
             (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze_list[i]).all() and 
             (self.fgp.raw_noise==self.raw_noise_freeze_list[i]).all())
+    def _force_recompile(self):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
+            self.fgp.raw_scale.requires_grad or 
+            self.fgp.raw_lengthscales.requires_grad or 
+            self.fgp.raw_noise.requires_grad)
     def _freeze(self, i):
         self.raw_scale_freeze_list[i] = self.fgp.raw_scale.clone()
         self.raw_lengthscales_freeze_list[i] = self.fgp.raw_lengthscales.clone()
@@ -71,8 +76,7 @@ class _LamCaches(object):
             if self.i0==self.i1:
                 k1[0] += self.fgp.noise
             self.lam_list = [np.sqrt(self.fgp.n[self.i1])*self.fgp.ft(k1)]
-            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-            if FASTGP_DEBUG=="True":
+            if os.environ.get("FASTGP_DEBUG")=="True":
                 kfull = self.fgp.kernel(self.fgp.get_x(self.i0)[:,None,:],self.fgp.get_x(self.i1)[None,:,:])
                 if self.i0==self.i1:
                     kfull += self.fgp.noise*torch.eye(kfull.size(0))
@@ -83,11 +87,10 @@ class _LamCaches(object):
             self.m_min = self.m_max = self.fgp.m(self.i0)
             return self.lam_list[0]
         if m==self.m_min:
-            assert False, r"account for sqrt(2^{m_\ell'})"
-            if not self._frozen_equal(0):
+            if not self._frozen_equal(0) or self._force_recompile():
                 k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][:2**self.m_min])
                 k1[0] += self.fgp.noise
-                self.lam_list[0] = np.sqrt(2**self.m_min)*self.fgp.ft(k1)
+                self.lam_list[0] = np.sqrt(self.fgp.n[self.i1])*self.fgp.ft(k1)
                 self._freeze(0)
             return self.lam_list[0]
         if m>self.m_max:
@@ -98,15 +101,14 @@ class _LamCaches(object):
             self.raw_noise_freeze_list += [torch.empty_like(self.raw_noise_freeze_list[0])]*(m-self.m_max)
             self.m_max = m
         midx = m-self.m_min
-        if not self._frozen_equal(midx):
+        if not self._frozen_equal(midx) or self._force_recompile():
             omega_m = self.fgp.get_omega(m-1)
             k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][2**(m-1):2**m])
             lam_m = np.sqrt(2**(m-1))*self.fgp.ft(k1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(m-1)
             self.lam_list[midx] = torch.hstack([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m])
-            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-            if FASTGP_DEBUG=="True":
+            if os.environ.get("FASTGP_DEBUG")=="True":
                 k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.i0,self.i1][:2**m])
                 lam_full = np.sqrt(2**m)*self.fgp.ft(k1_full)
                 assert torch.allclose(self.lam_list[midx],lam_full,atol=1e-7,rtol=0)
@@ -125,19 +127,23 @@ class _LamCaches(object):
 class _TaskCovCache(object):
     def __init__(self, fgp):
         self.fgp = fgp 
-        self._freeze()
         self.num_tasks_range = torch.arange(self.fgp.num_tasks,device=self.fgp.device)
     def _frozen_equal(self):
         return (
             (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
             (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
+    def _force_recompile(self):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
+            self.fgp.raw_factor_task_kernel.requires_grad or 
+            self.fgp.raw_noise_task_kernel.requires_grad)
     def _freeze(self):
         self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
         self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
-        if not hasattr(self,"kmat") or not self._frozen_equal():
+        if not hasattr(self,"kmat") or not self._frozen_equal() or self._force_recompile():
             self.kmat = self.fgp.factor_task_kernel@self.fgp.factor_task_kernel.T
             self.kmat[self.num_tasks_range,self.num_tasks_range] += self.fgp.noise_task_kernel
+            self._freeze()
         return self.kmat
 
 class _YtildeCache(object):
@@ -156,31 +162,36 @@ class _YtildeCache(object):
             self.ytilde = 1/np.sqrt(2)*torch.hstack([
                 self.ytilde+omega_ytilde_next,
                 self.ytilde-omega_ytilde_next])
-            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-            if FASTGP_DEBUG=="True":
+            if os.environ.get("FASTGP_DEBUG")=="True":
                 ytilde_ref = self.fgp.ft(self.fgp.y[:(2*n_curr)])
                 assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
         return self.ytilde 
 
 class _InverseLogDetCache(object):
     def __init__(self, fgp):
-        self.fgp = fgp 
-        self._freeze()
+        self.fgp = fgp
     def _frozen_equal(self):
         return (
             (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
             (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
             (self.fgp.raw_noise==self.raw_noise_freeze).all() and 
-            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all() and 
-            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all())
+            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
+            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
+    def _force_recompile(self):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
+            self.fgp.raw_scale.requires_grad or 
+            self.fgp.raw_lengthscales.requires_grad or 
+            self.fgp.raw_noise.requires_grad or 
+            self.fgp.raw_factor_task_kernel.requires_grad or 
+            self.fgp.raw_noise_task_kernel.requires_grad)
     def _freeze(self):
         self.raw_scale_freeze = self.fgp.raw_scale.clone()
         self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
         self.raw_noise_freeze = self.fgp.raw_noise.clone()
-        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
         self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
+        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
-        if not hasattr(self,"inv") or (self.n!=self.fgp.n).any() or (not self._frozen_equal()):
+        if not hasattr(self,"inv") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.gram_matrix_tasks
             o = self.fgp.task_order
             n = self.fgp.n[o]
@@ -211,8 +222,7 @@ class _InverseLogDetCache(object):
                 ur = torch.cat([C,-P[:,None,:]],dim=1)
                 br = torch.cat([-P.conj()[None,:,:],Sinv[None,None,:]],dim=1)
                 A = torch.cat([ur,br],dim=0)
-            FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-            if FASTGP_DEBUG=="True":
+            if os.environ.get("FASTGP_DEBUG")=="True":
                 lammats = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
                 for i0 in range(self.fgp.num_tasks):
                     for i1 in range(i0,self.fgp.num_tasks):
@@ -220,7 +230,7 @@ class _InverseLogDetCache(object):
                         if i0==i1: continue 
                         lammats[i1,i0] = lammats[i0,i1].conj().T
                 lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
-                assert torch.allclose(torch.abs(torch.logdet(lammat)),self.logdet)
+                assert torch.allclose(torch.logdet(lammat).real,self.logdet)
                 Afull = torch.vstack([torch.hstack([A[i0,i1]*torch.eye(A.size(-1)) for i1 in range(A.size(1))]) for i0 in range(A.size(0))])
                 assert torch.allclose(torch.linalg.inv(lammat),Afull)
             self._freeze()
@@ -284,7 +294,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
         if isinstance(factor_task_kernel,int):
-            factor_task_kernel = torch.zeros((self.num_tasks,factor_task_kernel),device=self.device)
+            factor_task_kernel = torch.ones((self.num_tasks,factor_task_kernel),device=self.device)
         assert len(tfs_factor_task_kernel)==2 and callable(tfs_factor_task_kernel[0]) and callable(tfs_factor_task_kernel[1]), "tfs_factor_task_kernel should be a tuple of two callables, the transform and inverse transform"
         self.tf_factor_task_kernel = tfs_factor_task_kernel[1]
         self.raw_factor_task_kernel = torch.nn.Parameter(tfs_factor_task_kernel[0](factor_task_kernel),requires_grad=requires_grad_factor_task_kernel)
@@ -326,22 +336,18 @@ class _FastMultiTaskGP(torch.nn.Module):
     def get_inv_log_det(self):
         return self.inv_log_det_cache()
     def gram_matrix_solve(self, y):
-        inv,logdet = self.get_inv_log_det()
         yogdim = y.ndim 
         if yogdim==1:
             y = y[:,None] 
         assert y.size(-2)==self.n.sum() 
         z = y.transpose(dim0=-2,dim1=-1)
         zs = z.split(self.n.tolist(),dim=-1)
-        zsp = [self.ft(zs[o]) for o in self.task_order]
-        z = torch.cat(zsp,dim=-1).reshape(list(z.shape[:-1])+[1,-1,self.n.min()])
-        z = (z*inv).sum(-2)
-        z = z.reshape(list(z.shape[:-2])+[-1])
-        zs = z.split(self.n[self.task_order].tolist(),dim=-1)
-        zsp = [self.ift(zs[o]).real for o in self.inv_task_order]
-        z = torch.cat(zsp,dim=-1).transpose(dim0=-2,dim1=-1)
-        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-        if FASTGP_DEBUG=="True":
+        zst = [self.ft(zs[i]) for i in range(self.num_tasks)]
+        zst,_ = self._gram_matrix_solve_tilde_to_tilde(zst)
+        zs = [self.ift(zst[i]).real for i in range(self.num_tasks)]
+        z = torch.cat(zs,dim=-1).transpose(dim0=-2,dim1=-1)
+        if os.environ.get("FASTGP_DEBUG")=="True":
+            _,logdet = self.get_inv_log_det()
             kmat_tasks = self.gram_matrix_tasks
             kmat = torch.vstack([
                 torch.hstack([kmat_tasks[ell0,ell1]*self.kernel(self.get_x(ell0)[:,None,:],self.get_x(ell1)[None,:,:]) for ell1 in range(self.num_tasks)])
@@ -353,6 +359,15 @@ class _FastMultiTaskGP(torch.nn.Module):
         if yogdim==1:
             z = z[:,0]
         return z
+    def _gram_matrix_solve_tilde_to_tilde(self, zst):
+        inv,logdet = self.get_inv_log_det()
+        zsto = [zst[o] for o in self.task_order]
+        z = torch.cat(zsto,dim=-1).reshape(list(zsto[0].shape[:-1])+[1,-1,self.n.min()])
+        z = (z*inv).sum(-2)
+        z = z.reshape(list(z.shape[:-2])+[-1])
+        zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
+        zst = [zsto[o] for o in self.inv_task_order]
+        return zst,logdet
     @property
     def scale(self):
         return self.tf_scale(self.raw_scale)
@@ -397,12 +412,14 @@ class _FastMultiTaskGP(torch.nn.Module):
         Increase the sample size to `n`. 
 
         Args:
-            y_next (np.ndarray[num_tasks] of torch.Tensor[...,n[i]-self.n[i]]): new function evaluations for each task
+            y_next (List[num_tasks] of torch.Tensor[...,n[i]-self.n[i]]): new function evaluations for each task
         """
         if not hasattr(self,"y"):
             self.y = y_next
         else:
-            self.y = np.array([torch.cat([self.y[i],y_next[i]],-1) for i in range(self.num_tasks)],dtype=object)
+            self.y = [torch.cat([self.y[i],y_next[i]],-1) for i in range(self.num_tasks)]
+        assert all(yi.shape[:-1]==self.y[0].shape[:-1] for yi in self.y)
+        self.d_out = self.y[0][...,0].numel()
         self.n = torch.tensor([self.y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
         assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
     def _kernel_parts(self, x, z):
@@ -555,8 +572,7 @@ class _FastMultiTaskGP(torch.nn.Module):
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
         pcmean = self.scale*self.coeffs.sum()
-        FASTGP_DEBUG = os.environ.get("FASTGP_DEBUG")
-        if FASTGP_DEBUG=="True":
+        if os.environ.get("FASTGP_DEBUG")=="True":
             assert torch.allclose(pcmean,self.y.mean(),atol=1e-3,rtol=0), "pcmean-self.y.mean()"
             assert torch.allclose(pcmean,self.ytilde[0].real/np.sqrt(self.n),atol=1e-3,rtol=0)
         if eval:
@@ -618,14 +634,14 @@ class _FastMultiTaskGP(torch.nn.Module):
     def fit(self,
         iterations:int = 5000,
         optimizer:torch.optim.Optimizer = None,
-        lr:float = 1e-1,
+        lr:float = 1e-2,
         store_mll_hist:bool = True, 
         store_scale_hist:bool = True, 
         store_lengthscales_hist:bool = True,
         store_noise_hist:bool = True,
         verbose:int = 5,
         verbose_indent:int = 4,
-        stop_crit_improvement_threshold:float = 1e-5,
+        stop_crit_improvement_threshold:float = 1e1,
         stop_crit_wait_iterations:int = 10,
         ):
         """
@@ -648,7 +664,7 @@ class _FastMultiTaskGP(torch.nn.Module):
                 ["mll_hist","scale_hist","lengthscales_hist","noise_hist"]
                 ```
         """
-        assert self.n>0, "cannot fit without data"
+        assert (self.n>0).any(), "cannot fit without data"
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
             assert np.isscalar(lr) and lr>0, "require lr is a positive float"
@@ -660,8 +676,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         assert isinstance(store_noise_hist,bool), "require bool store_noise_hist"
         assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
-        assert isinstance(stop_crit_improvement_threshold,float) and 0<=stop_crit_improvement_threshold<1, "require stop_crit_improvement_threshold is a float in [0,1)"
+        assert isinstance(stop_crit_improvement_threshold,float) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
+        logtol = np.log(1+stop_crit_improvement_threshold)
         if store_mll_hist:
             mll_hist = torch.empty(iterations+1)
         store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
@@ -677,16 +694,22 @@ class _FastMultiTaskGP(torch.nn.Module):
             _s = "%16s | %-10s | %-10s | %-10s | %-s"%("iter of %.1e"%iterations,"NMLL","noise","scale","lengthscales")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
-        mll_const = self.d_out*self.n*np.log(2*np.pi)
+        mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
         stop_crit_best_mll = torch.inf 
         stop_crit_save_mll = torch.inf 
         stop_crit_iterations_without_improvement_mll = 0
-        absytilde2 = torch.abs(self.ytilde)**2
+        ytildes = [self.get_ytilde(i) for i in range(self.num_tasks)]
+        ytildescat = torch.cat(ytildes,dim=-1)
+        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         for i in range(iterations+1):
-            mll = (absytilde2/self.lam.real).sum()+self.d_out*torch.log(torch.abs(self.lam)).sum()+mll_const
+            ztildes,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+            ztildescat = torch.cat(ztildes,dim=-1)
+            term1 = (ytildescat*ztildescat).real.sum()
+            term2 = self.d_out*logdet
+            mll = term1+term2+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
-            if mll.item()<stop_crit_save_mll*(1-stop_crit_improvement_threshold):
+            if (stop_crit_save_mll-mll.item())>logtol:
                 stop_crit_iterations_without_improvement_mll = 0
                 stop_crit_save_mll = stop_crit_best_mll
             else:
@@ -706,9 +729,11 @@ class _FastMultiTaskGP(torch.nn.Module):
                         (i,mll.item(),self.noise.item(),self.scale.item(),str(self.lengthscales.detach().cpu().numpy()))
                 print(" "*verbose_indent+_s)
             if break_condition: break
-            mll.backward()
+            mll.backward()#retain_graph=True)
             optimizer.step()
             optimizer.zero_grad()
+            if self.inv_log_det_cache._frozen_equal(): break
+        del os.environ["FASTGP_FORCE_RECOMPILE"]
         data = {}
         if store_mll_hist:
             data["mll_hist"] = mll_hist

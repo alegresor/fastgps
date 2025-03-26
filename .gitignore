@@ -1,5 +1,6 @@
 # alegresor 
 ags/
+tmp/
 ags.py
 .vscode/
 *.pdf
