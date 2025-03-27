@@ -28,7 +28,7 @@ fs = [
     #lambda x: torch.cos(2*np.pi*x).sum(1),
     lambda x: f_ackley(x),
 ]
-n = torch.tensor([2**5,2**3])
+n = torch.tensor([2**5,2**8])
 n_new = n.clone(); n_new[0] = 8*n_new[0]
 num_tasks = len(n)
 
@@ -41,19 +41,19 @@ fgp_multitask = fastgp.FastMultiTaskGPDigitalNetB2(seqs=d,seed_for_seq=7,num_tas
 
 xticks = torch.linspace(0,1,101)[1:-1,None]
 yticks = torch.vstack([fs[i](xticks) for i in range(num_tasks)])
-fig,ax = pyplot.subplots(nrows=3,ncols=num_tasks,figsize=(10,8),sharex=True,sharey="col")
+fig,ax = pyplot.subplots(nrows=3,ncols=num_tasks,figsize=(10,8),sharex=True,sharey=False)
 ax = np.atleast_1d(ax).reshape((3,num_tasks))
 for i,fgp in enumerate([fgp_indep,fgp_multitask]):
     x_next = fgp.get_x_next(n=n)
     y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
     fgp.add_y_next(y_next)
     fgp.fit(
-        #iterations=5,
+        iterations=5,
         #lr=1e-3,
         #optimizer=torch.optim.Adam(fgp.parameters(),lr=1e-1,amsgrad=True),
     )
-    fgp.post_cov(xticks,xticks[::2],n=None)
-    fgp.post_cov(xticks,xticks,n=n_new)
+    print(fgp.post_cubature_var(n=n_new))
+    print(fgp.post_cubature_cov(n=n_new))
     pmean,pvar,q,ci_low,ci_high = fgp.post_ci(xticks)
     pvar_new = fgp.post_var(xticks,n=n_new)
     for l in range(num_tasks):
