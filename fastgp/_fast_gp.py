@@ -303,7 +303,7 @@ class _CoeffsCache(object):
             self.n = self.fgp.n.clone()
         return self.coeffs 
 
-class _FastMultiTaskGP(torch.nn.Module):
+class _FastGP(torch.nn.Module):
     def __init__(self,
         seqs,
         num_tasks,

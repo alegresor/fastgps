@@ -1,2 +1,0 @@
-from .fast_mt_gp_lattice import FastMultiTaskGPLattice
-from .fast_mt_gp_digital_net_b2 import FastMultiTaskGPDigitalNetB2

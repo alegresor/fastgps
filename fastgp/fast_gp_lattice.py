@@ -1,10 +1,10 @@
-from ._fast_mt_gp import _FastMultiTaskGP
+from ._fast_gp import _FastGP
 import torch 
 import qmcpy as qmcpy
 import numpy as np
 from typing import Tuple,Union
 
-class FastMultiTaskGPLattice(_FastMultiTaskGP):
+class FastGPLattice(_FastGP):
     """
     Fast Gaussian process regression using lattice points and shift invariant kernels
 
@@ -23,7 +23,7 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
 
         >>> n = 2**10
         >>> d = 2
-        >>> fgp = FastMultiTaskGPLattice(seqs = qmcpy.Lattice(dimension=d,seed=7))
+        >>> fgp = FastGPLattice(seqs = qmcpy.Lattice(dimension=d,seed=7))
         >>> x_next = fgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
