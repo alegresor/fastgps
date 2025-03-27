@@ -52,6 +52,8 @@ for i,fgp in enumerate([fgp_indep,fgp_multitask]):
         #lr=1e-3,
         #optimizer=torch.optim.Adam(fgp.parameters(),lr=1e-1,amsgrad=True),
     )
+    fgp.post_cov(xticks,xticks[::2],n=None)
+    fgp.post_cov(xticks,xticks,n=n_new)
     pmean,pvar,q,ci_low,ci_high = fgp.post_ci(xticks)
     pvar_new = fgp.post_var(xticks,n=n_new)
     for l in range(num_tasks):
