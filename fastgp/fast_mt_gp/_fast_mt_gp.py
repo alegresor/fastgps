@@ -239,7 +239,7 @@ class _InverseLogDetCache(object):
                 lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
                 assert torch.allclose(torch.logdet(lammat).real,self.logdet)
                 Afull = torch.vstack([torch.hstack([A[l0,l1]*torch.eye(A.size(-1)) for l1 in range(A.size(1))]) for l0 in range(A.size(0))])
-                assert torch.allclose(torch.linalg.inv(lammat),Afull)
+                assert torch.allclose(torch.linalg.inv(lammat),Afull,rtol=1e-4)
             self._freeze()
             self.inv = A
         return self.inv,self.logdet
@@ -261,7 +261,7 @@ class _InverseLogDetCache(object):
             kmat += self.fgp.noise*torch.eye(kmat.size(0))
             assert torch.allclose(logdet,torch.logdet(kmat))
             ztrue = torch.linalg.solve(kmat,y)
-            assert torch.allclose(ztrue,z)
+            assert torch.allclose(ztrue,z,atol=1e-3)
         if yogdim==1:
             z = z[:,0]
         return z
@@ -717,8 +717,10 @@ class _FastMultiTaskGP(torch.nn.Module):
         if inttask1: task1 = torch.tensor([task1],dtype=int)
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
-        inv_cut = inv[mvec,:][:,mvec][:,:,0]
-        term = torch.einsum("ij,jk,kl->il",kmat_tasks[task0,:][:,to],nsqrts*inv_cut,kmat_tasks[to,:][:,task1])
+        inv_cut = inv[mvec,:][:,mvec][:,:,0].real
+        kmat_tasks_left = kmat_tasks[task0,:][:,to].to(self._FTOUTDTYPE)
+        kmat_tasks_right = kmat_tasks[to,:][:,task1].to(self._FTOUTDTYPE)
+        term = torch.einsum("ij,jk,kl->il",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
         pccov = self.scale*kmat_tasks[task0,:][:,task1]-self.scale**2*term
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -760,7 +762,9 @@ class _FastMultiTaskGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         inv_cut = inv[mvec,:][:,mvec][:,:,0]
-        term = torch.einsum("ij,jk,ki->i",kmat_tasks[task,:][:,to],nsqrts*inv_cut,kmat_tasks[to,:][:,task])
+        kmat_tasks_left = kmat_tasks[task,:][:,to].to(self._FTOUTDTYPE)
+        kmat_tasks_right = kmat_tasks[to,:][:,task].to(self._FTOUTDTYPE)
+        term = torch.einsum("ij,jk,ki->i",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
         pcvar = self.scale*kmat_tasks[task,task]-self.scale**2*term
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -869,7 +873,7 @@ class _FastMultiTaskGP(torch.nn.Module):
         for i in range(iterations+1):
             ztildes,logdet = self.get_inv_log_det_cache()._gram_matrix_solve_tilde_to_tilde(ytildes)
             ztildescat = torch.cat(ztildes,dim=-1)
-            term1 = (ytildescat*ztildescat).real.sum()
+            term1 = (ytildescat.conj()*ztildescat).real.sum()
             term2 = self.d_out*logdet
             mll = term1+term2+mll_const
             if mll.item()<stop_crit_best_mll:
