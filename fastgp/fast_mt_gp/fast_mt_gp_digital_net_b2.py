@@ -40,19 +40,18 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
-             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 3.35e+03   | 1.00e-16   | 1.00e+00   | [1.00e+00 1.00e+00]
-                    5.00e+00 | 3.24e+03   | 1.00e-16   | 1.55e+00   | [9.21e-01 9.21e-01]
-                    1.00e+01 | 3.13e+03   | 1.00e-16   | 2.94e+00   | [6.32e-01 6.32e-01]
-                    1.50e+01 | 3.10e+03   | 1.00e-16   | 3.78e+00   | [5.13e-01 5.13e-01]
-                    2.00e+01 | 3.10e+03   | 1.00e-16   | 4.53e+00   | [4.65e-01 4.65e-01]
-                    2.50e+01 | 3.09e+03   | 1.00e-16   | 4.93e+00   | [4.35e-01 4.35e-01]
-                    3.00e+01 | 3.09e+03   | 1.00e-16   | 5.31e+00   | [4.15e-01 4.20e-01]
-                    3.50e+01 | 3.09e+03   | 1.00e-16   | 5.65e+00   | [3.84e-01 4.19e-01]
-                    4.00e+01 | 3.09e+03   | 1.00e-16   | 5.71e+00   | [3.83e-01 4.19e-01]
-                    4.50e+01 | 3.09e+03   | 1.00e-16   | 5.72e+00   | [3.84e-01 4.19e-01]
-                    4.80e+01 | 3.09e+03   | 1.00e-16   | 5.73e+00   | [3.84e-01 4.19e-01]
+             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales         | task_kernel 
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 3.35e+03   | 1.00e-16   | 1.00e+00   | [1.0e+00 1.0e+00]    | [[1.0e+00]]
+                    5.00e+00 | 3.24e+03   | 1.00e-16   | 1.55e+00   | [9.2e-01 9.2e-01]    | [[1.0e+00]]
+                    1.00e+01 | 3.13e+03   | 1.00e-16   | 2.94e+00   | [6.3e-01 6.3e-01]    | [[1.0e+00]]
+                    1.50e+01 | 3.10e+03   | 1.00e-16   | 3.78e+00   | [5.1e-01 5.1e-01]    | [[1.0e+00]]
+                    2.00e+01 | 3.10e+03   | 1.00e-16   | 4.53e+00   | [4.7e-01 4.7e-01]    | [[1.0e+00]]
+                    2.50e+01 | 3.09e+03   | 1.00e-16   | 4.93e+00   | [4.3e-01 4.3e-01]    | [[1.0e+00]]
+                    3.00e+01 | 3.09e+03   | 1.00e-16   | 5.31e+00   | [4.1e-01 4.2e-01]    | [[1.0e+00]]
+                    3.50e+01 | 3.09e+03   | 1.00e-16   | 5.65e+00   | [3.8e-01 4.2e-01]    | [[1.0e+00]]
+                    4.00e+01 | 3.09e+03   | 1.00e-16   | 5.71e+00   | [3.8e-01 4.2e-01]    | [[1.0e+00]]
+                    4.30e+01 | 3.09e+03   | 1.00e-16   | 5.72e+00   | [3.8e-01 4.2e-01]    | [[1.0e+00]]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
@@ -107,13 +106,13 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0258)
+        tensor(0.0259)
 
         >>> x_next = fgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0192)
+        tensor(0.0191)
 
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
@@ -134,7 +133,7 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
     _FTOUTDTYPE = torch.float64
     def __init__(self,
             seqs:Union[qmcpy.DigitalNetB2,int],
-            num_tasks:int,
+            num_tasks:int = None,
             seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
@@ -151,8 +150,8 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
-            requires_grad_factor_task_kernel:bool = True,
-            requires_grad_noise_task_kernel:bool = True,
+            requires_grad_factor_task_kernel:bool = None,
+            requires_grad_noise_task_kernel:bool = None,
             compile_fts:bool = False,
             compile_fts_kwargs: dict = {},
             ):
@@ -191,9 +190,18 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
-        assert isinstance(num_tasks,int) and num_tasks>0
+        if num_tasks is None: 
+            solo_task = True
+            default_task = 0 
+            num_tasks = 1
+        else:
+            assert isinstance(num_tasks,int) and num_tasks>0
+            solo_task = False
+            default_task = torch.arange(num_tasks)
         if isinstance(seqs,int):
-            seqs = [qmcpy.DigitalNetB2(seqs,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
+            seqs = np.array([qmcpy.DigitalNetB2(seqs,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
+        if isinstance(seqs,qmcpy.DigitalNetB2):
+            seqs = np.array([seqs],dtype=object)
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
@@ -201,13 +209,18 @@ class FastMultiTaskGPDigitalNetB2(_FastMultiTaskGP):
         assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         assert all(seqs[i].t_lms<64 for i in range(num_tasks)), "each seq must have t_lms<64"
-        assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
+        if num_tasks==1:
+            assert seqs[0].randomize in ['FALSE','DS','LMS','LMS_DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS_DS']"
+        else:
+            assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
         assert all(seqs[i].t_lms==seqs[0].t_lms for i in range(num_tasks)), "all seqs should have the same t_lms"
         self.t = seqs[0].t_lms
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
             seqs,
             num_tasks,
+            default_task,
+            solo_task,
             alpha,
             scale,
             lengthscales,

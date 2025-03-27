@@ -45,38 +45,20 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         tensor(7.0015e-09)
 
         >>> data = fgp.fit()
-             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 3.70e+05   | 1.00e-08   | 1.00e+00   | [1.00e+00 1.00e+00]
-                    5.00e+00 | 4.12e+04   | 1.00e-08   | 2.10e+00   | [2.10e+00 2.10e+00]
-                    1.00e+01 | 2.81e+03   | 1.00e-08   | 8.00e+00   | [8.00e+00 8.00e+00]
-                    1.50e+01 | 2.82e+03   | 1.00e-08   | 8.18e+00   | [8.18e+00 8.18e+00]
-                    2.00e+01 | 2.80e+03   | 1.00e-08   | 7.73e+00   | [7.73e+00 7.73e+00]
-                    2.50e+01 | 2.80e+03   | 1.00e-08   | 7.74e+00   | [7.74e+00 7.64e+00]
-                    3.00e+01 | 2.80e+03   | 1.00e-08   | 7.75e+00   | [7.66e+00 7.45e+00]
-                    3.50e+01 | 2.80e+03   | 1.00e-08   | 8.04e+00   | [7.69e+00 7.17e+00]
-                    4.00e+01 | 2.79e+03   | 1.00e-08   | 8.83e+00   | [7.69e+00 6.54e+00]
-                    4.50e+01 | 2.79e+03   | 1.00e-08   | 9.01e+00   | [7.68e+00 6.39e+00]
-                    5.00e+01 | 2.79e+03   | 1.00e-08   | 9.20e+00   | [7.69e+00 6.18e+00]
-                    5.50e+01 | 2.79e+03   | 1.00e-08   | 9.77e+00   | [7.71e+00 5.82e+00]
-                    6.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [7.74e+00 5.64e+00]
-                    6.50e+01 | 2.79e+03   | 1.00e-08   | 1.01e+01   | [7.74e+00 5.58e+00]
-                    7.00e+01 | 2.79e+03   | 1.00e-08   | 1.01e+01   | [7.78e+00 5.51e+00]
-                    7.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [7.87e+00 5.44e+00]
-                    8.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [8.10e+00 5.29e+00]
-                    8.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [8.70e+00 4.92e+00]
-                    9.00e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.15e+00 4.73e+00]
-                    9.50e+01 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.21e+00 4.62e+00]
-                    1.00e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [9.64e+00 4.41e+00]
-                    1.05e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.02e+01 4.21e+00]
-                    1.10e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.01e+01 4.17e+00]
-                    1.15e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.01e+01 4.16e+00]
-                    1.17e+02 | 2.79e+03   | 1.00e-08   | 1.02e+01   | [1.02e+01 4.17e+00]
+             iter of 5.0e+03 | NMLL       | noise      | scale      | lengthscales         | task_kernel 
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 3.70e+05   | 1.00e-08   | 1.00e+00   | [1.0e+00 1.0e+00]    | [[1.0e+00]]
+                    5.00e+00 | 4.12e+04   | 1.00e-08   | 2.10e+00   | [2.1e+00 2.1e+00]    | [[1.0e+00]]
+                    1.00e+01 | 2.81e+03   | 1.00e-08   | 8.00e+00   | [8.0e+00 8.0e+00]    | [[1.0e+00]]
+                    1.50e+01 | 2.82e+03   | 1.00e-08   | 8.18e+00   | [8.2e+00 8.2e+00]    | [[1.0e+00]]
+                    2.00e+01 | 2.80e+03   | 1.00e-08   | 7.73e+00   | [7.7e+00 7.7e+00]    | [[1.0e+00]]
+                    2.50e+01 | 2.80e+03   | 1.00e-08   | 7.74e+00   | [7.7e+00 7.6e+00]    | [[1.0e+00]]
+                    2.60e+01 | 2.80e+03   | 1.00e-08   | 7.74e+00   | [7.7e+00 7.6e+00]    | [[1.0e+00]]
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0359)
+        tensor(0.0361)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -101,13 +83,13 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(3.0169e-06)
+        tensor(3.1823e-06)
 
         >>> pcmean,pcvar,q,cci_low,cci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> cci_low
-        tensor(20.1797)
+        tensor(20.1796)
         >>> cci_high
-        tensor(20.1887)
+        tensor(20.1888)
 
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
         >>> pvar_future = fgp.post_var(x,n=2*n)
@@ -117,7 +99,7 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0309)
+        tensor(0.0305)
 
         >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
@@ -137,7 +119,7 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0275)
+        tensor(0.0276)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)
@@ -153,9 +135,9 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
     _FTOUTDTYPE = torch.complex128
     def __init__(self,
             seqs:qmcpy.Lattice,
-            num_tasks:int,
+            num_tasks:int = None,
             seed_for_seq:int = None,
-            alpha:int = 3,
+            alpha:int = 2,
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1, 
             noise:float = 1e-8, 
@@ -170,8 +152,8 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
-            requires_grad_factor_task_kernel:bool = True,
-            requires_grad_noise_task_kernel:bool = True,
+            requires_grad_factor_task_kernel:bool = None,
+            requires_grad_noise_task_kernel:bool = None,
             compile_fts:bool = False,
             compile_fts_kwargs:dict = {},
             ):
@@ -209,9 +191,18 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
-        assert isinstance(num_tasks,int) and num_tasks>0
+        if num_tasks is None: 
+            solo_task = True
+            default_task = 0 
+            num_tasks = 1
+        else:
+            assert isinstance(num_tasks,int) and num_tasks>0
+            solo_task = False
+            default_task = torch.arange(num_tasks)
         if isinstance(seqs,int):
-            seqs = [qmcpy.Lattice(seqs,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
+            seqs = np.array([qmcpy.Lattice(seqs,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
+        if isinstance(seqs,qmcpy.Lattice):
+            seqs = np.array([seqs],dtype=object)
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
@@ -225,6 +216,8 @@ class FastMultiTaskGPLattice(_FastMultiTaskGP):
         super().__init__(
             seqs,
             num_tasks,
+            default_task,
+            solo_task,
             alpha,
             scale,
             lengthscales,

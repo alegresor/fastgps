@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np 
 
 torch.set_default_dtype(torch.float64)
-#os.environ["FASTGP_DEBUG"] = "True"
+os.environ["FASTGP_DEBUG"] = "True"
 torch.autograd.set_detect_anomaly(True)
 
 colors = ["xkcd:"+color[:-1] for color in pd.read_csv("./xkcd_colors.txt",comment="#").iloc[:,0].tolist()][::-1]
