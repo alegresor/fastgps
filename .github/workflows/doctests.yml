@@ -17,10 +17,10 @@ jobs:
       - name: Install Base Dependencies 
         shell: bash -l {0}
         run: |
-          pip install numpy
-          pip install scipy
-          pip install torch 
-          pip install qmcpy
+          pip install numpy>=2.2.3
+          pip install scipy>=1.15.2
+          pip install torch>=2.6.0
+          pip install qmcpy>=1.6.2.1
           pip install pytest
           pip install nbval
       - name: Install fastgp 
