@@ -80,7 +80,7 @@ class _LamCaches(object):
         if self.m_min==-1 and m>=0:
             k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.l0,self.l1,n=2**m))
             if self.l0==self.l1:
-                k1[0] += self.fgp.noise
+                k1[...,[0]] += self.fgp.noise
             self.lam_list = [self.fgp.ft(k1)]
             self._freeze(0)
             self.m_min = self.m_max = m
@@ -88,7 +88,7 @@ class _LamCaches(object):
         if m==self.m_min:
             if not self._frozen_equal(0) or self._force_recompile():
                 k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min])
-                k1[0] += self.fgp.noise
+                k1[...,[0]] += self.fgp.noise
                 self.lam_list[0] = self.fgp.ft(k1)
                 self._freeze(0)
             return self.lam_list[0]
@@ -139,8 +139,11 @@ class _TaskCovCache(object):
         self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
         if not hasattr(self,"kmat") or not self._frozen_equal() or self._force_recompile():
-            self.kmat = self.fgp.factor_task_kernel@self.fgp.factor_task_kernel.T
-            self.kmat[self.num_tasks_range,self.num_tasks_range] += self.fgp.noise_task_kernel
+            self.kmat = torch.einsum("...il,...kl->...ik",self.fgp.factor_task_kernel,self.fgp.factor_task_kernel)
+            ndim = self.kmat.ndim
+            if ndim>2:
+                self.kmat = torch.tile(self.kmat,self.fgp.shape_batch[:-(ndim-2)]+torch.Size([1]*ndim))
+            self.kmat[...,self.num_tasks_range,self.num_tasks_range] += self.fgp.noise_task_kernel
             self._freeze()
         return self.kmat
 
@@ -200,37 +203,39 @@ class _InverseLogDetCache(object):
                 to0 = self.task_order[l0]
                 for l1 in range(l0,self.fgp.num_tasks):
                     to1 = self.task_order[l1]
-                    lams[l0,l1] = torch.sqrt(n[l1])*kmat_tasks[to0,to1]*self.fgp.get_lam(to0,to1,n[l0])
-            self.logdet = torch.log(torch.abs(lams[0,0])).sum()
-            A = (1/lams[0,0])[None,None,:]
+                    lams[l0,l1] = torch.sqrt(n[l1])*kmat_tasks[...,to0,to1,None]*self.fgp.get_lam(to0,to1,n[l0])
+            self.logdet = torch.log(torch.abs(lams[0,0])).sum(-1)
+            A = (1/lams[0,0])[...,None,None,:]
             for l in range(1,self.fgp.num_tasks):
                 if n[l]==0: break
-                B = torch.cat([lams[k,l] for k in range(l)],dim=0).reshape((-1,n[l]))
-                Bvec = B.reshape((A.size(1),-1))
-                T = (Bvec*A).sum(1).reshape((-1,n[l]))
-                M = (B.conj()*T).sum(0)
+                _B = torch.cat([lams[k,l] for k in range(l)],dim=-1)
+                B = _B.reshape(_B.shape[:-1]+torch.Size([-1,n[l]]))
+                Bvec = B.reshape(B.shape[:-2]+(1,A.size(-2),-1))
+                _T = (Bvec*A).sum(-2)
+                T = _T.reshape(_T.shape[:-2]+torch.Size([-1,n[l]]))
+                M = (B.conj()*T).sum(-2)
                 S = lams[l,l]-M
-                self.logdet += torch.log(torch.abs(S)).sum()
-                P = T/S
-                C = P[:,None,:]*(T[None,:,:].conj())
+                self.logdet += torch.log(torch.abs(S)).sum(-1)
+                P = T/S[...,None,:]
+                C = P[...,:,None,:]*(T[...,None,:,:].conj())
                 r = A.size(-1)//C.size(-1)
-                ii = torch.arange(A.size(0))
+                ii = torch.arange(A.size(-2))
                 jj = torch.arange(A.size(-1))
                 ii0,ii1,ii2 = torch.meshgrid(ii,ii,jj,indexing="ij")
                 ii0,ii1,ii2 = ii0.ravel(),ii1.ravel(),ii2.ravel()
                 jj0 = ii2%C.size(-1)
                 jj1 = ii2//C.size(-1)
-                C[ii0*r+jj1,ii1*r+jj1,jj0] += A[ii0,ii1,ii2]
-                ur = torch.cat([C,-P[:,None,:]],dim=1)
-                br = torch.cat([-P.conj()[None,:,:],1/S[None,None,:]],dim=1)
-                A = torch.cat([ur,br],dim=0)
+                C[...,ii0*r+jj1,ii1*r+jj1,jj0] += A[...,ii0,ii1,ii2]
+                ur = torch.cat([C,-P[...,:,None,:]],dim=-2)
+                br = torch.cat([-P.conj()[...,None,:,:],1/S[...,None,None,:]],dim=-2)
+                A = torch.cat([ur,br],dim=-3)
             if os.environ.get("FASTGP_DEBUG")=="True":
                 lammats = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
                 for l0 in range(self.fgp.num_tasks):
                     for l1 in range(l0,self.fgp.num_tasks):
                         lammats[l0,l1] = (lams[l0,l1].reshape((-1,n[l1],1))*torch.eye(n[l1])).reshape((-1,n[l1]))
                         if l0==l1: continue 
-                        lammats[l1,l0] = lammats[l0,l1].conj().T
+                        lammats[l1,l0] = lammats[l0,l1].conj().transpose(dim0=-2,dim1=-1)
                 lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
                 assert torch.allclose(torch.logdet(lammat).real,self.logdet)
                 Afull = torch.vstack([torch.hstack([A[l0,l1]*torch.eye(A.size(-1)) for l1 in range(A.size(1))]) for l0 in range(A.size(0))])

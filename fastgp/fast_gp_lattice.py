@@ -139,10 +139,11 @@ class FastGPLattice(AbstractFastGP):
             seed_for_seq:int = None,
             alpha:int = 2,
             scale:float = 1., 
-            lengthscales:Union[torch.Tensor,float] = 1, 
+            lengthscales:Union[torch.Tensor,float] = 1., 
             noise:float = 1e-8, 
-            factor_task_kernel:Union[torch.Tensor,int] = None, 
-            noise_task_kernel:Union[torch.Tensor,float] = 1,
+            factor_task_kernel:Union[torch.Tensor,int] = 1., 
+            rank_factor_task_kernel:int = None,
+            noise_task_kernel:Union[torch.Tensor,float] = 1.,
             device:torch.device = "cpu",
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
@@ -154,6 +155,12 @@ class FastGPLattice(AbstractFastGP):
             requires_grad_noise:bool = False, 
             requires_grad_factor_task_kernel:bool = None,
             requires_grad_noise_task_kernel:bool = None,
+            shape_batch:torch.Size = torch.Size([]),
+            shape_scale:torch.Size = torch.Size([1]), 
+            shape_lengthscales:torch.Size = None,
+            shape_noise:torch.Size = torch.Size([1]),
+            shape_factor_task_kernel:torch.Size = None, 
+            shape_noise_task_kernel:torch.Size = None,
             compile_fts:bool = False,
             compile_fts_kwargs:dict = {},
             ):
@@ -172,10 +179,10 @@ class FastGPLattice(AbstractFastGP):
             lengthscales (Union[torch.Tensor[d],float]): vector of kernel lengthscales. 
                 If a scalar is passed in then `lengthscales` is set to a constant vector. 
             noise (float): positive noise variance i.e. nugget term
-            factor_task_kernel (Union[Tensor[num_tasks,r],int]): for $F$ the `factor_task_kernel` the task kernel is $FF^T + \\text{diag}(\\boldsymbol{v})$ 
-                where `r<=num_tasks` is the rank and $\\boldsymbol{v}$ is the `noise_task_kernel`. If an int `r` is passed in $F$ is initialized to zeros. 
-            noise_task_kernel (Union[torch.Tensor[num_tasks],float]): positive $\\boldsymbol{v}$ in the description of `factor_task_kernel` above. 
-                If a scalar is passed in then `noise_task_kernel` is set to a constant vector.
+            factor_task_kernel (Union[Tensor[num_tasks,rank_factor_task_kernel],int]): for $F$ the `factor_task_kernel` the task kernel is $FF^T + \\text{diag}(\\boldsymbol{v})$ 
+                where `rank_factor_task_kernel<=num_tasks` and $\\boldsymbol{v}$ is the `noise_task_kernel`.
+            rank_factor_task_kernel (int): see the description of `factor_task_kernel` above. Defaults to 0 for single task problems and 1 for multi task problems.
+            noise_task_kernel (Union[torch.Tensor[num_tasks],float]): see the description of `factor_task_kernel` above
             device (torch.device): torch device which is required to support `torch.float64`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
@@ -187,6 +194,12 @@ class FastGPLattice(AbstractFastGP):
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
             requires_grad_factor_task_kernel (bool): wheather or not to optimize the factor for the task kernel
             requires_grad_noise_task_kernel (bool): wheather or not to optimize the noise for the task kernel
+            shape_batch (torch.Size): shape of the batch output for each task
+            shape_scale (torch.Size): shape of the scale parameter, defaults to `torch.Size([1])`
+            shape_lengthscales (torch.Size): shape of the lengthscales parameter, defaults to `torch.Size([d])` where `d` is the dimension
+            shape_noise (torch.Size): shape of the noise parameter, defaults to `torch.Size([1])`
+            shape_factor_task_kernel (torch.Size): shape of the factor for the task kernel, defaults to `torch.Size([num_tasks,r])` where `r` is the rank, see the description of `factor_task_kernel`
+            shape_noise_task_kernel (torch.Size): shape of the noise for the task kernel, defaults to `torch.Size([num_tasks])`
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fftbr_torch,**compile_fts)` and `torch.compile(qmcpy.ifftbr_torch,**compile_fts)`, otherwise use the uncompiled versions
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
         """
@@ -223,6 +236,7 @@ class FastGPLattice(AbstractFastGP):
             lengthscales,
             noise,
             factor_task_kernel,
+            rank_factor_task_kernel,
             noise_task_kernel,
             device,
             tfs_scale,
@@ -235,6 +249,12 @@ class FastGPLattice(AbstractFastGP):
             requires_grad_noise,
             requires_grad_factor_task_kernel,
             requires_grad_noise_task_kernel,
+            shape_batch,
+            shape_scale, 
+            shape_lengthscales,
+            shape_noise,
+            shape_factor_task_kernel, 
+            shape_noise_task_kernel,
             ft,
             ift,
         )

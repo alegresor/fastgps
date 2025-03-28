@@ -31,5 +31,4 @@ jobs:
       - name: Doctests
         shell: bash -l {0}
         run: | 
-          pytest --doctest-modules fastgp/ -W ignore
-          pytest --nbval docs/ 
+          make tests 

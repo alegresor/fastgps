@@ -23,6 +23,7 @@ class AbstractFastGP(torch.nn.Module):
             lengthscales,
             noise,
             factor_task_kernel,
+            rank_factor_task_kernel,
             noise_task_kernel,
             device,
             tfs_scale,
@@ -35,6 +36,12 @@ class AbstractFastGP(torch.nn.Module):
             requires_grad_noise,
             requires_grad_factor_task_kernel,
             requires_grad_noise_task_kernel,
+            shape_batch,
+            shape_scale, 
+            shape_lengthscales,
+            shape_noise,
+            shape_factor_task_kernel, 
+            shape_noise_task_kernel,
             ft,
             ift,
         ):
@@ -51,44 +58,82 @@ class AbstractFastGP(torch.nn.Module):
         self.seqs = seqs
         self.n = torch.zeros(self.num_tasks,dtype=int)
         self.m = -1*torch.ones(self.num_tasks,dtype=int)
+        # alpha
         assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self.d,)), "alpha should be an int or a torch.Tensor of length d"
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
         self.alpha = alpha
-        assert np.isscalar(scale) and scale>0, "scale should be a positive float"
-        scale = torch.tensor(scale,device=self.device)
+        # shape_batch 
+        if isinstance(shape_batch,(list,tuple)): shape_batch = torch.Size(shape_batch)
+        assert isinstance(shape_batch,torch.Size)
+        self.shape_batch = shape_batch
+        # scale
+        assert np.isscalar(scale) or isinstance(scale,torch.Tensor), "scale must be a scalar or torch.Tensor"
+        if isinstance(scale,torch.Tensor): shape_scale = scale.shape
+        if isinstance(shape_scale,(list,tuple)): shape_scale = torch.Size(shape_scale)
+        assert isinstance(shape_scale,torch.Size) and shape_scale[-1]==1
+        if len(shape_scale)>1: assert shape_scale[:-1]==shape_batch[-(len(shape_scale)-1):]
+        if np.isscalar(scale): scale = scale*torch.ones(shape_scale,device=self.device)
+        assert (scale>0).all(), "scale must be positive"
         assert len(tfs_scale)==2 and callable(tfs_scale[0]) and callable(tfs_scale[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
         self.tf_scale = tfs_scale[1]
         self.raw_scale = torch.nn.Parameter(tfs_scale[0](scale),requires_grad=requires_grad_scale)
-        assert (np.isscalar(lengthscales) and lengthscales>0) or (isinstance(lengthscales,torch.Tensor) and lengthscales.shape==(self.d,) and (lengthscales>0).all()), "lengthscales should be a float or torch.Tensor of length d and must be postivie"
-        if np.isscalar(lengthscales): 
-            lengthscales = lengthscales*torch.ones(self.d,device=self.device)
+        # lengthscales
+        assert np.isscalar(lengthscales) or isinstance(lengthscales,torch.Tensor), "lengthscales must be a scalar or torch.Tensor"
+        if isinstance(lengthscales,torch.Tensor): shape_lengthscales = lengthscales.shape 
+        if shape_lengthscales is None: shape_lengthscales = torch.Size([self.d])
+        if isinstance(shape_lengthscales,(list,tuple)): shape_lengthscales = torch.Size(shape_lengthscales)
+        assert isinstance(shape_lengthscales,torch.Size) and (shape_lengthscales[-1]==self.d or shape_lengthscales[-1]==1)
+        if len(shape_lengthscales)>1: assert shape_lengthscales[:-1]==shape_batch[-(len(shape_lengthscales)-1):]
+        if np.isscalar(lengthscales): lengthscales = lengthscales*torch.ones(shape_lengthscales,device=self.device)
+        assert (lengthscales>0).all(), "lengthscales must be positive"
         assert len(tfs_lengthscales)==2 and callable(tfs_lengthscales[0]) and callable(tfs_lengthscales[1]), "tfs_lengthscales should be a tuple of two callables, the transform and inverse transform"
         self.tf_lengthscales = tfs_lengthscales[1]
         self.raw_lengthscales = torch.nn.Parameter(tfs_lengthscales[0](lengthscales),requires_grad=requires_grad_lengthscales)
-        assert np.isscalar(noise) and noise>0, "noise should be a positive float"
-        noise = torch.tensor(noise,device=self.device)
+        # noise
+        assert np.isscalar(noise) or isinstance(noise,torch.Tensor), "noise must be a scalar or torch.Tensor"
+        if isinstance(noise,torch.Tensor): shape_noise = noise.shape
+        if isinstance(shape_noise,(list,tuple)): shape_noise = torch.Size(shape_noise)
+        assert isinstance(shape_noise,torch.Size) and shape_noise[-1]==1
+        if len(shape_noise)>1: assert shape_noise[:-1]==shape_batch[-(len(shape_noise)-1):]
+        if np.isscalar(noise): noise = noise*torch.ones(shape_noise,device=self.device)
+        assert (noise>0).all(), "noise must be positive"
         assert len(tfs_noise)==2 and callable(tfs_noise[0]) and callable(tfs_noise[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
-        assert factor_task_kernel is None or (isinstance(factor_task_kernel,int) and 0<=factor_task_kernel<=self.num_tasks) or (isinstance(factor_task_kernel,torch.Tensor) and factor_task_kernel.ndim==2 and factor_task_kernel.size(0)==self.num_tasks and factor_task_kernel.size(1)<=self.num_tasks), "factor_task_kernel should be a non-negative int less than num_tasks or a num_tasks x r torch.Tensor with r<=num_tasks" 
         self.tf_noise = tfs_noise[1]
         self.raw_noise = torch.nn.Parameter(tfs_noise[0](noise),requires_grad=requires_grad_noise)
-        if factor_task_kernel is None:
-            factor_task_kernel = 0 if self.num_tasks==1 else 1
-        if isinstance(factor_task_kernel,int):
-            factor_task_kernel = torch.ones((self.num_tasks,factor_task_kernel),device=self.device)
+        # factor_task_kernel
+        assert np.isscalar(factor_task_kernel) or isinstance(factor_task_kernel,torch.Tensor), "factor_task_kernel must be a scalar or torch.Tensor"
+        if isinstance(factor_task_kernel,torch.Tensor): shape_factor_task_kernel = factor_task_kernel.shape
+        if shape_factor_task_kernel is None:
+            if rank_factor_task_kernel is None: rank_factor_task_kernel = 0 if self.num_tasks==1 else 1 
+            assert isinstance(rank_factor_task_kernel,int) and 0<=rank_factor_task_kernel<=self.num_tasks
+            shape_factor_task_kernel = torch.Size([self.num_tasks,rank_factor_task_kernel])
+        if isinstance(shape_factor_task_kernel,(list,tuple)): shape_factor_task_kernel = torch.Size(shape_factor_task_kernel)
+        assert isinstance(shape_factor_task_kernel,torch.Size) and 0<=shape_factor_task_kernel[-1]<=self.num_tasks and shape_factor_task_kernel[-2]==self.num_tasks
+        if len(shape_factor_task_kernel)>2: assert shape_factor_task_kernel[:-2]==shape_batch[-(len(shape_factor_task_kernel)-2):]
+        if np.isscalar(factor_task_kernel): factor_task_kernel = factor_task_kernel*torch.ones(shape_factor_task_kernel,device=self.device)
         assert len(tfs_factor_task_kernel)==2 and callable(tfs_factor_task_kernel[0]) and callable(tfs_factor_task_kernel[1]), "tfs_factor_task_kernel should be a tuple of two callables, the transform and inverse transform"
         self.tf_factor_task_kernel = tfs_factor_task_kernel[1]
         if requires_grad_factor_task_kernel is None: requires_grad_factor_task_kernel = self.num_tasks>1
         self.raw_factor_task_kernel = torch.nn.Parameter(tfs_factor_task_kernel[0](factor_task_kernel),requires_grad=requires_grad_factor_task_kernel)
-        assert (np.isscalar(noise_task_kernel) and noise_task_kernel>0) or (isinstance(noise_task_kernel,torch.Tensor) and noise_task_kernel.shape==(self.num_tasks,) and (noise_task_kernel>0).all()), "noise_task_kernel should be a scalar or torch.Tensor of length num_tasks and must be positive"
-        if np.isscalar(noise_task_kernel):
-            noise_task_kernel = noise_task_kernel*torch.ones(self.num_tasks,device=self.device)
+        # noise_task_kernel
+        assert np.isscalar(noise_task_kernel) or isinstance(noise_task_kernel,torch.Tensor), "noise_task_kernel must be a scalar or torch.Tensor"
+        if isinstance(noise_task_kernel,torch.Tensor): shape_noise_task_kernel = noise_task_kernel.shape 
+        if shape_noise_task_kernel is None: shape_noise_task_kernel = torch.Size([self.num_tasks])
+        if isinstance(shape_noise_task_kernel,(list,tuple)): shape_noise_task_kernel = torch.Size(shape_noise_task_kernel)
+        assert isinstance(shape_noise_task_kernel,torch.Size) and (shape_noise_task_kernel[-1]==self.num_tasks or shape_noise_task_kernel[-1]==1)
+        if len(shape_noise_task_kernel)>1: assert shape_noise_task_kernel[:-1]==shape_batch[-(len(shape_noise_task_kernel)-1):]
+        if np.isscalar(noise_task_kernel): noise_task_kernel = noise_task_kernel*torch.ones(shape_noise_task_kernel,device=self.device)
+        assert (noise_task_kernel>0).all(), "noise_task_kernel must be positive"
         assert len(tfs_noise_task_kernel)==2 and callable(tfs_noise_task_kernel[0]) and callable(tfs_noise_task_kernel[1]), "tfs_noise_task_kernel should be a tuple of two callables, the transform and inverse transform"
         self.tf_noise_task_kernel = tfs_noise_task_kernel[1]
         if requires_grad_noise_task_kernel is None: requires_grad_noise_task_kernel = self.num_tasks>1
         self.raw_noise_task_kernel = torch.nn.Parameter(tfs_noise_task_kernel[0](noise_task_kernel),requires_grad=requires_grad_noise_task_kernel)
+        # fast transforms 
         self.ft = ft
         self.ift = ift
+        # storaget and dynamic caches
+        self._y = [torch.empty(0) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
@@ -96,7 +141,8 @@ class AbstractFastGP(torch.nn.Module):
         self.task_cov_cache = _TaskCovCache(self)
         self.coeffs_cache = _CoeffsCache(self)
         self.inv_log_det_cache_dict = {}
-        self._y = [torch.empty(0) for l in range(self.num_tasks)]
+        # MLL setup
+        self.d_out = int(torch.tensor(self.shape_batch).prod())
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """
         Get the next sampling locations. 
@@ -131,8 +177,7 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task,int): task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert isinstance(y_next,list) and isinstance(task,torch.Tensor) and task.ndim==1 and len(y_next)==len(task)
-        assert all(y_next[i].shape[:-1]==y_next[0].shape[:-1] for i in range(len(y_next)))
-        self.d_out = int(torch.tensor(y_next[0].shape[1:]).prod())
+        assert all(y_next[i].shape[:-1]==self.shape_batch for i in range(len(y_next)))
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
@@ -195,12 +240,12 @@ class AbstractFastGP(torch.nn.Module):
         store_lengthscales_hist = store_lengthscales_hist and self.raw_lengthscales.requires_grad
         store_noise_hist = store_noise_hist and self.raw_noise.requires_grad
         store_task_kernel_hist = store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad)
-        if store_scale_hist: scale_hist = torch.empty(iterations+1)
-        if store_lengthscales_hist: lengthscales_hist = torch.empty((iterations+1,self.d))
-        if store_noise_hist: noise_hist = torch.empty(iterations+1)
-        if store_task_kernel_hist: task_kernel_hist = torch.empty((iterations+1,self.num_tasks,self.num_tasks))
+        if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
+        if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
+        if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
+        if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s | %-20s | %-s "%("iter of %.1e"%iterations,"NMLL","noise","scale","lengthscales","task_kernel")
+            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"NMLL","norm term","logdet term")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
@@ -213,9 +258,9 @@ class AbstractFastGP(torch.nn.Module):
         for i in range(iterations+1):
             ztildes,logdet = self.get_inv_log_det_cache()._gram_matrix_solve_tilde_to_tilde(ytildes)
             ztildescat = torch.cat(ztildes,dim=-1)
-            term1 = (ytildescat.conj()*ztildescat).real.sum()
-            term2 = self.d_out*logdet
-            mll = term1+term2+mll_const
+            norm_term = (ytildescat.conj()*ztildescat).real.sum()
+            logdet_term = self.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+            mll = norm_term+logdet_term+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
             if (stop_crit_save_mll-mll.item())>logtol:
@@ -225,14 +270,12 @@ class AbstractFastGP(torch.nn.Module):
                 stop_crit_iterations_without_improvement_mll += 1
             break_condition = i==iterations or stop_crit_iterations_without_improvement_mll==stop_crit_wait_iterations
             if store_mll_hist: mll_hist[i] = mll.item()
-            if store_scale_hist: scale_hist[i] = self.scale.item()
+            if store_scale_hist: scale_hist[i] = self.scale.detach().to(scale_hist.device)
             if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
-            if store_noise_hist: noise_hist[i] = self.noise.item()
+            if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                with np.printoptions(formatter={"float":lambda x: "%.1e"%x},threshold=6,edgeitems=3):
-                    _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-20s | %-s"%\
-                        (i,mll.item(),self.noise.item(),self.scale.item(),str(self.lengthscales.detach().cpu().numpy()),str(self.gram_matrix_tasks.detach().cpu().numpy()).replace("\n",""))
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,mll.item(),norm_term.item(),logdet_term.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
             mll.backward()
@@ -644,7 +687,7 @@ class AbstractFastGP(torch.nn.Module):
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
-        return self.scale*(1+self.lengthscales*parts).prod(-1)
+        return self.scale*(1+self.lengthscales[...,None,:]*parts).prod(-1)
     def _kernel_from_delta(self, delta):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def _kernel(self, x:torch.Tensor, z:torch.Tensor):
