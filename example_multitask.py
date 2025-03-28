@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np 
 
 torch.set_default_dtype(torch.float64)
-#os.environ["FASTGP_DEBUG"] = "True"
+os.environ["FASTGP_DEBUG"] = "True"
 torch.autograd.set_detect_anomaly(True)
 
 colors = ["xkcd:"+color[:-1] for color in pd.read_csv("./xkcd_colors.txt",comment="#").iloc[:,0].tolist()][::-1]
@@ -37,11 +37,11 @@ n_new = n.clone(); n_new[0] = 8*n_new[0]
 num_tasks = len(n)
 
 
-#fgp_indep = fastgp.FastGPDigitalNetB2(d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
-fgp_indep = fastgp.FastGPLattice(d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
+fgp_indep = fastgp.FastGPDigitalNetB2(d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
+#fgp_indep = fastgp.FastGPLattice(d,seed_for_seq=7,num_tasks=num_tasks,factor_task_kernel=0,requires_grad_factor_task_kernel=False,requires_grad_noise_task_kernel=False)
 
-#fgp_multitask = fastgp.FastGPDigitalNetB2(d,seed_for_seq=7,num_tasks=num_tasks)
-fgp_multitask = fastgp.FastGPLattice(d,seed_for_seq=7,num_tasks=num_tasks)
+fgp_multitask = fastgp.FastGPDigitalNetB2(d,seed_for_seq=7,num_tasks=num_tasks)
+#fgp_multitask = fastgp.FastGPLattice(d,seed_for_seq=7,num_tasks=num_tasks)
 
 xticks = torch.linspace(0,1,101)[1:-1,None]
 yticks = torch.vstack([fs[i](xticks) for i in range(num_tasks)])
@@ -71,12 +71,4 @@ for l in range(num_tasks):
     ax[2,l].set_yscale("log",base=10)
     ax[0,l].set_title("Task %d"%l)
 fig.tight_layout()
-fig.savefig("example_vec.pdf")
-
-# fgp.fit(iterations=10)
-
-# x_next = fgp.get_x_next(n=32)
-# print(x_next.shape)
-# y_next = f(x_next) 
-# fgp.add_y_next(y_next)
-# fgp.fit(iterations=10)
+fig.savefig("example_multitask.pdf")

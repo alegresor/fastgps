@@ -159,7 +159,7 @@ class FastGPLattice(_FastGP):
             ):
         """
         Args:
-            seqs (Union[List[num_tasks] of qmcpy.Lattice],int]): list of lattice sequence generators
+            seqs ([int,qmcpy.Lattice,List]): list of lattice sequence generators
                 with order="NATURAL" and randomize in `["FALSE","SHIFT"]`. If an int `d` is passed in we use 
                 ```python
                 [qmcpy.Lattice(d,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
@@ -173,10 +173,10 @@ class FastGPLattice(_FastGP):
                 If a scalar is passed in then `lengthscales` is set to a constant vector. 
             noise (float): positive noise variance i.e. nugget term
             factor_task_kernel (Union[Tensor[num_tasks,r],int]): for $F$ the `factor_task_kernel` the task kernel is $FF^T + \\text{diag}(\\boldsymbol{v})$ 
-                where `r<num_tasks` is the rank and $\\boldsymbol{v}$ is the `noise_task_kernel`. If an int `r` is passed in $F$ is initialized to zeros. 
+                where `r<=num_tasks` is the rank and $\\boldsymbol{v}$ is the `noise_task_kernel`. If an int `r` is passed in $F$ is initialized to zeros. 
             noise_task_kernel (Union[torch.Tensor[num_tasks],float]): positive $\\boldsymbol{v}$ in the description of `factor_task_kernel` above. 
                 If a scalar is passed in then `noise_task_kernel` is set to a constant vector.
-            device (torch.device): torch device which is required to support torch.float64
+            device (torch.device): torch device which is required to support `torch.float64`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
