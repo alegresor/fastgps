@@ -8,6 +8,9 @@ nav:
   - Multitask Examples:
     - Fast GP DNb2: examples/multitask/fgp_dnb2.ipynb
     - Fast GP lattice: examples/multitask/fgp_lattice.ipynb
+  - Batch Multitask Examples:
+    - Fast GP DNb2: examples/batch_multitask/fgp_dnb2.ipynb
+    - Fast GP lattice: examples/batch_multitask/fgp_lattice.ipynb
   
 plugins:
   - mkdocs-jupyter:
