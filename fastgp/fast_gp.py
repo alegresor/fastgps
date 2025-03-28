@@ -132,7 +132,7 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert isinstance(y_next,list) and isinstance(task,torch.Tensor) and task.ndim==1 and len(y_next)==len(task)
         assert all(y_next[i].shape[:-1]==y_next[0].shape[:-1] for i in range(len(y_next)))
-        self.d_out = y_next[0][...,0].numel()
+        self.d_out = int(torch.tensor(y_next[0].shape[1:]).prod())
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
@@ -618,7 +618,6 @@ class AbstractFastGP(torch.nn.Module):
         assert 0<=task1<self.num_tasks
         if n is None: m = int(self.m[task0])
         else: m = -1 if n==0 else int(np.log2(int(n)))
-        assert m>=0
         return self.lam_caches[task0,task1][m]
     def get_k1parts(self, task0, task1, n=None):
         assert 0<=task0<self.num_tasks
