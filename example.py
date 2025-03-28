@@ -42,7 +42,7 @@ n = 2**2
 print("lattice")
 print("  n = %d"%n)
 fgp = fastgp.FastGPLattice(
-    seq = qp.Lattice(dimension=d,seed=7),
+    qp.Lattice(dimension=d,seed=7),
     device = device,
     )
 x_next = fgp.get_x_next(n)
@@ -80,7 +80,7 @@ print()
 print("digital net")
 print("  n = %d"%n)
 fgp = fastgp.FastGPDigitalNetB2(
-    seq = qp.DigitalNetB2(dimension=1,seed=7),
+    qp.DigitalNetB2(dimension=1,seed=7),
     device = device,
     )
 x_next = fgp.get_x_next(n)
