@@ -1,4 +1,4 @@
-from .fast_gp import AbstractFastGP
+from .abstract_fast_gp import AbstractFastGP
 import torch
 import numpy as np
 import qmcpy as qmcpy

@@ -51,7 +51,7 @@ class AbstractFastGP(torch.nn.Module):
         self.seqs = seqs
         self.n = torch.zeros(self.num_tasks,dtype=int)
         self.m = -1*torch.ones(self.num_tasks,dtype=int)
-        assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self,d,)), "alpha should be an int or a torch.Tensor of length d"
+        assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self.d,)), "alpha should be an int or a torch.Tensor of length d"
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
         self.alpha = alpha
@@ -60,7 +60,7 @@ class AbstractFastGP(torch.nn.Module):
         assert len(tfs_scale)==2 and callable(tfs_scale[0]) and callable(tfs_scale[1]), "tfs_scale should be a tuple of two callables, the transform and inverse transform"
         self.tf_scale = tfs_scale[1]
         self.raw_scale = torch.nn.Parameter(tfs_scale[0](scale),requires_grad=requires_grad_scale)
-        assert (np.isscalar(lengthscales) and lengthscales>0) or (isinstance(lengthscales,torch.Tensor) and lengthscales.shape==(self,d) and (lengthscales>0).all()), "lengthscales should be a float or torch.Tensor of length d and must be postivie"
+        assert (np.isscalar(lengthscales) and lengthscales>0) or (isinstance(lengthscales,torch.Tensor) and lengthscales.shape==(self.d,) and (lengthscales>0).all()), "lengthscales should be a float or torch.Tensor of length d and must be postivie"
         if np.isscalar(lengthscales): 
             lengthscales = lengthscales*torch.ones(self.d,device=self.device)
         assert len(tfs_lengthscales)==2 and callable(tfs_lengthscales[0]) and callable(tfs_lengthscales[1]), "tfs_lengthscales should be a tuple of two callables, the transform and inverse transform"
