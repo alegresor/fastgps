@@ -1,5 +1,17 @@
 site_name: "FastGP"
+nav:
+  - Home: index.md
+  - API: api.md
+  - Standard Examples:
+    - Fast GP DNb2: examples/standard/fgp_dnb2.ipynb
+    - Fast GP lattice: examples/standard/fgp_lattice.ipynb
+  - Multitask Examples:
+    - Fast GP DNb2: examples/multitask/fgp_dnb2.ipynb
+    - Fast GP lattice: examples/multitask/fgp_lattice.ipynb
+  
 plugins:
+  - mkdocs-jupyter:
+      #ignore_h1_titles: True
   - mkdocstrings:
       #enabled: !ENV [ENABLE_MKDOCSTRINGS, true]
       #custom_templates: templates

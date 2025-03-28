@@ -5,3 +5,4 @@ exportenv:
 
 doctests: 
 	pytest --doctest-modules fastgp/ -W ignore
+	pytest --nbval docs/
