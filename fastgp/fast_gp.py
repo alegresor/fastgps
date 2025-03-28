@@ -12,7 +12,7 @@ import scipy.stats
 import os
 from typing import Union,List
 
-class _FastGP(torch.nn.Module):
+class AbstractFastGP(torch.nn.Module):
     def __init__(self,
             seqs,
             num_tasks,

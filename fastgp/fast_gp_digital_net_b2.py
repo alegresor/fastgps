@@ -1,10 +1,10 @@
-from .fast_gp import _FastGP
+from .fast_gp import AbstractFastGP
 import torch
 import numpy as np
 import qmcpy as qmcpy
 from typing import Tuple,Union
 
-class FastGPDigitalNetB2(_FastGP):
+class FastGPDigitalNetB2(AbstractFastGP):
     """
     Fast Gaussian process regression using digitally shifted digital nets paired with digitally shift invariant kernels
     

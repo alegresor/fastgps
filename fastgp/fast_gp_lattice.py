@@ -1,10 +1,10 @@
-from .fast_gp import _FastGP
+from .fast_gp import AbstractFastGP
 import torch 
 import qmcpy as qmcpy
 import numpy as np
 from typing import Tuple,Union
 
-class FastGPLattice(_FastGP):
+class FastGPLattice(AbstractFastGP):
     """
     Fast Gaussian process regression using lattice points and shift invariant kernels
 
