@@ -2,9 +2,7 @@ import torch
 import numpy as np 
 import scipy.stats 
 import os
-import qmcpy
-import itertools
-from typing import List
+from typing import Union,List
 
 class _XXbSeq(object):
     def __init__(self, fgp, seq):
@@ -390,35 +388,62 @@ class _FastGP(torch.nn.Module):
         self._y = [torch.empty(0) for l in range(self.num_tasks)]
     @property
     def scale(self):
+        """
+        Kernel scale parameter.
+        """
         return self.tf_scale(self.raw_scale)
     @property
     def lengthscales(self):
+        """
+        Kernel lengthscale parameter.
+        """
         return self.tf_lengthscales(self.raw_lengthscales)
     @property
     def noise(self):
+        """
+        Noise parameter.
+        """
         return self.tf_noise(self.raw_noise)
     @property
     def factor_task_kernel(self):
+        """
+        Factor for the task kernel parameter.
+        """
         return self.tf_factor_task_kernel(self.raw_factor_task_kernel)
     @property
     def noise_task_kernel(self):
+        """
+        Noise for the task kernel parameter.
+        """
         return self.tf_noise_task_kernel(self.raw_noise_task_kernel)
     @property 
     def gram_matrix_tasks(self):
+        """
+        Gram matrix for the task kernel.
+        """
         return self.task_cov_cache()
     @property 
     def coeffs(self):
+        r"""
+        Coefficients $\mathsf{K}^{-1} \boldsymbol{y}$.
+        """
         return self.coeffs_cache()
     @property
     def x(self):
+        """
+        Current sampling locations. 
+        A `torch.Tensor` for single task problems.
+        A `list` for multitask problems.
+        """
         xs = [self.get_x(l) for l in range(self.num_tasks)]
         return xs[0] if self.solo_task else xs
     @property
-    def xb(self):
-        xbs = [self.get_bx(l) for l in range(self.num_tasks)]
-        return xbs[0] if self.solo_task else xbs
-    @property
     def y(self):
+        """
+        Current sampling values. 
+        A `torch.Tensor` for single task problems.
+        A `list` for multitask problems.
+        """
         return self._y[0] if self.solo_task else self._y 
     def get_x(self, task, n=None):
         assert 0<=task<self.num_tasks
@@ -461,16 +486,16 @@ class _FastGP(torch.nn.Module):
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache()
-    def get_x_next(self, n:torch.Tensor, task:torch.Tensor=None):
+    def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """
-        Get next sampling locations. 
+        Get the next sampling locations. 
 
         Args:
-            n (torch.Tensor[num_tasks]): maximum sample index for each task
-            task (torch.Tensor): task indices, should have the same length as n
+            n (Union[int,torch.Tensor]): maximum sample index per task
+            task (Union[int,torch.Tensor]): task index
         
         Returns:
-            x_next (List[num_tasks] of torch.Tensor[n[task[i]]-self.n[task[i]],d]): next samples in the sequence
+            x_next (Union[torch.Tensor,List]): next samples in the sequence
         """
         if isinstance(n,int): n = torch.tensor([n],dtype=int) 
         if isinstance(n,list): n = torch.tensor(n,dtype=int)
@@ -482,13 +507,13 @@ class _FastGP(torch.nn.Module):
         assert (n>=self.n[task]).all() and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2 greater than the current number of samples"
         x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
-    def add_y_next(self, y_next:List, task:torch.Tensor=None):
+    def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
-        Increase the sample size to `n`. 
+        Add samples to the GP. 
 
         Args:
-            y_next (List[num_tasks] of torch.Tensor[...,n[task[i]]-self.n[task[i]]]): new function evaluations for each task
-            task (torch.Tensor): task indices, should have the same length as n
+            y_next (Union[torch.Tensor,List]): new function evaluations at next sampling locations
+            task (Union[int,torch.Tensor]): task index
         """
         if isinstance(y_next,torch.Tensor): y_next = [y_next]
         if task is None: task = self.default_task
@@ -510,7 +535,7 @@ class _FastGP(torch.nn.Module):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def kernel(self, x:torch.Tensor, z:torch.Tensor):
         """
-        Evaluate kernel
+        Kernel between inputs, **not** tasks. 
 
         Args:
             x (torch.Tensor[N,d]): first argument to kernel  
@@ -520,17 +545,17 @@ class _FastGP(torch.nn.Module):
             kmat (torch.Tensor[N,M]): matrix of kernel evaluations
         """
         return self._kernel_from_parts(self._kernel_parts(x,z))
-    def post_mean(self, x:torch.Tensor, task:torch.Tensor=None, eval:bool=True):
+    def post_mean(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior mean. 
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
+            task (Union[int,torch.Tensor[T]]): task index
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (torch.Tensor): task indices
         
         Returns:
-            pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
+            pmean (torch.Tensor[...,T,N]): posterior mean
         """
         coeffs = self.coeffs
         kmat_tasks = self.gram_matrix_tasks
@@ -548,21 +573,20 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
-    def post_cov(self, x0:torch.Tensor, x1:torch.Tensor, task0:torch.Tensor=None, task1:torch.Tensor=None, n:torch.Tensor=None, eval:bool=True):
+    def post_cov(self, x0:torch.Tensor, x1:torch.Tensor, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior covariance. 
-        If `torch.equal(x,z)` then the diagonal of the covariance matrix is forced to be non-negative. 
 
         Args:
             x0 (torch.Tensor[N,d]): left sampling locations
             x1 (torch.Tensor[M,d]): right sampling locations
-            task0 (torch.Tensor): left task indices
-            task1 (torch.Tensor): right task indices
-            n (torch.Tensor): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n`. `n` must be powers of 2.  
+            task0 (Union[int,torch.Tensor[T1]]): left task index
+            task1 (Union[int,torch.Tensor[T2]]): right task index
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
-            pcov (torch.Tensor[N,M]): posterior covariance matrix
+            pcov (torch.Tensor[T1,T2,N,M]): posterior covariance matrix
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int)
@@ -605,18 +629,18 @@ class _FastGP(torch.nn.Module):
             return kmat[:,0]
         else: # not inttask0 and not inttask1
             return kmat
-    def post_var(self, x:torch.Tensor, task:torch.Tensor=None, n:torch.Tensor=None, eval:bool=True):
+    def post_var(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
         """
-        Posterior variance. Forced to be non-negative.  
+        Posterior variance.
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
-            n (torch.Tensor): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n`. `n` must be powers of 2.  
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (torch.Tensor): task indices
 
         Returns:
-            pvar (torch.Tensor[N]): posterior variance vector
+            pvar (torch.Tensor[T,N]): posterior variance
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int)
@@ -639,25 +663,25 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return diag[0] if inttask else diag
-    def post_ci(self, x, task:torch.Tensor=None, confidence:float=0.99, eval:bool=True):
+    def post_ci(self, x, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior credible interval.
 
         Args:
             x (torch.Tensor[N,d]): sampling locations
+            task (Union[int,torch.Tensor[T]]): task indices
             confidence (float): confidence level in $(0,1)$ for the credible interval
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (torch.Tensor): task indices
 
         Returns:
-            pmean (torch.Tensor[*batch_shape,N]): posterior mean where `batch_shape` is inferred from `y=f(x)`
-            pvar (torch.Tensor[N]): posterior variance vector
+            pmean (torch.Tensor[...,T,N]): posterior mean
+            pvar (torch.Tensor[T,N]): posterior variance 
             quantile (np.float64):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
-            ci_low (torch.Tensor[*batch_shape,N]): credible interval lower bound
-            ci_high (torch.Tensor[*batch_shape,N]): credible interval upper bound
+            ci_low (torch.Tensor[...,T,N]): credible interval lower bound
+            ci_high (torch.Tensor[...,T,N]): credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
@@ -667,16 +691,16 @@ class _FastGP(torch.nn.Module):
         ci_low = pmean-q*pstd 
         ci_high = pmean+q*pstd
         return pmean,pvar,q,ci_low,ci_high
-    def post_cubature_mean(self, task:torch.Tensor=None, eval:bool=True):
+    def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature mean. 
 
         Args:
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (torch.Tensor): task indices
+            task (Union[int,torch.Tensor[T]]): task indices
 
         Returns:
-            pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
+            pcmean (torch.Tensor[...,T]): posterior cubature mean
         """
         kmat_tasks = self.gram_matrix_tasks
         coeffs = self.coeffs
@@ -694,18 +718,18 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[0] if inttask else pcmean
-    def post_cubature_cov(self, task0:torch.Tensor=None, task1:torch.Tensor=None, n:int=None, eval:bool=True):
+    def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature covariance. 
 
         Args:
-            task0 (torch.Tensor): task indices
-            task1 (torch.Tensor): task indices
-            n (torch.Tensor): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n`. `n` must be powers of 2.  
+            task0 (Union[int,torch.Tensor[T1]]): task indices
+            task1 (Union[int,torch.Tensor[T2]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature covariance.
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
-            pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
+            pcvar (torch.Tensor[T1,T2]): posterior cubature covariance
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int)
@@ -748,20 +772,20 @@ class _FastGP(torch.nn.Module):
         elif inttask0 and not inttask1:
             return pccov[0]
         elif not inttask0 and inttask1:
-            return pcov[:,0]
+            return pccov[:,0]
         else: #not inttask0 and not inttask1
             return pccov
-    def post_cubature_var(self, task:torch.Tensor=None, n:int=None, eval:bool=True):
+    def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature variance. 
 
         Args:
-            task (torch.Tensor): task indices
-            n (torch.Tensor): Number of points at which to evaluate the posterior cubature variance. Defaults to `n=self.n`. `n` must be powers of 2.  
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
 
         Returns:
-            pcvar (torch.Tensor[*batch_shape]): posterior cubature variance where `batch_shape` is inferred from `y=f(x)`
+            pcvar (torch.Tensor[T]): posterior cubature variance
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int)
@@ -790,24 +814,24 @@ class _FastGP(torch.nn.Module):
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar[0] if inttask else pcvar
-    def post_cubature_ci(self, task:torch.Tensor=None, confidence:float=0.99, eval:bool=True):
+    def post_cubature_ci(self, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior cubature credible.
 
         Args:
-            task (torch.Tensor): task indices
+            task (Union[int,torch.Tensor[T]]): task indices
             confidence (float): confidence level in $(0,1)$ for the credible interval
             eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
         
         Returns:
-            pcmean (torch.Tensor[*batch_shape]): posterior cubature mean where `batch_shape` is inferred from `y=f(x)`
-            pcvar (torch.Tensor[*batch_shape]): posterior cubature variance
+            pcmean (torch.Tensor[...,T]): posterior cubature mean
+            pcvar (torch.Tensor[T]): posterior cubature variance
             quantile (np.float64):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
-            cci_low (torch.Tensor[*batch_shape]): scalar credible interval lower bound
-            cci_high (torch.Tensor[*batch_shape]): scalar credible interval upper bound
+            cci_low (torch.Tensor[...,T]): scalar credible interval lower bound
+            cci_high (torch.Tensor[...,T]): scalar credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
