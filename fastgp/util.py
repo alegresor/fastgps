@@ -125,7 +125,6 @@ class _LamCaches(object):
 class _TaskCovCache(object):
     def __init__(self, fgp):
         self.fgp = fgp 
-        self.num_tasks_range = torch.arange(self.fgp.num_tasks,device=self.fgp.device)
     def _frozen_equal(self):
         return (
             (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
@@ -140,10 +139,7 @@ class _TaskCovCache(object):
     def __call__(self):
         if not hasattr(self,"kmat") or not self._frozen_equal() or self._force_recompile():
             self.kmat = torch.einsum("...il,...kl->...ik",self.fgp.factor_task_kernel,self.fgp.factor_task_kernel)
-            ndim = self.kmat.ndim
-            if ndim>2:
-                self.kmat = torch.tile(self.kmat,self.fgp.shape_batch[:-(ndim-2)]+torch.Size([1]*ndim))
-            self.kmat[...,self.num_tasks_range,self.num_tasks_range] += self.fgp.noise_task_kernel
+            self.kmat = self.kmat+self.fgp.noise_task_kernel[...,None]*torch.eye(self.fgp.num_tasks,device=self.fgp.device)
             self._freeze()
         return self.kmat
 
