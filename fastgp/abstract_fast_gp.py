@@ -231,7 +231,7 @@ class AbstractFastGP(torch.nn.Module):
         assert isinstance(store_task_kernel_hist,bool), "require bool store_task_kernel_hist"
         assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
-        assert isinstance(stop_crit_improvement_threshold,float) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
+        assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
         logtol = np.log(1+stop_crit_improvement_threshold)
         if store_mll_hist:
@@ -312,8 +312,8 @@ class AbstractFastGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])*kmat_tasks[task,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        pmean = torch.einsum("til,...l->...ti",kmat,coeffs)
+        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[None,...]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
@@ -352,7 +352,7 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
-        kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])*kmat_tasks[task0,:][:,task1][:,:,None,None]
+        kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])*kmat_tasks[...,task0,:][...,:,task1][:,:,None,None]
         kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l,n[l])[None,:,:])*kmat_tasks[task0,l,None,None] for l in range(self.num_tasks)],dim=-1)
         kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l,n[l])[None,:,:])*kmat_tasks[task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
         t = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat2.transpose(dim0=-2,dim1=-1)).transpose(dim0=-2,dim1=-1)
@@ -399,9 +399,9 @@ class AbstractFastGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat_new = self._kernel(x,x)*kmat_tasks[task,task,None]
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l,n[l])[None,:,:])*kmat_tasks[task,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        t = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat.transpose(dim0=-2,dim1=-1)).transpose(dim0=-2,dim1=-1)
+        kmat_new = self._kernel(x,x)[...,None,:]*kmat_tasks[...,task,task,None]
+        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        t = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat)
         diag = kmat_new-torch.einsum("til,til->ti",t,kmat)
         diag[diag<0] = 0 
         if eval:
@@ -687,7 +687,10 @@ class AbstractFastGP(torch.nn.Module):
     def _kernel_parts(self, x, z):
         return self._kernel_parts_from_delta(self._ominus(x,z))
     def _kernel_from_parts(self, parts):
-        return self.scale*(1+self.lengthscales[...,None,:]*parts).prod(-1)
+        ndim = parts.ndim
+        scale = self.scale.reshape(self.scale.shape+torch.Size([1]*(ndim-2))) 
+        lengthscales = self.lengthscales.reshape(self.lengthscales.shape[:-1]+torch.Size([1]*(ndim-1)+[self.lengthscales.size(-1)]))
+        return scale*(1+lengthscales*parts).prod(-1)
     def _kernel_from_delta(self, delta):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def _kernel(self, x:torch.Tensor, z:torch.Tensor):

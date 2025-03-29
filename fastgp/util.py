@@ -240,32 +240,25 @@ class _InverseLogDetCache(object):
             self.inv = A
         return self.inv,self.logdet
     def gram_matrix_solve(self, y):
-        yogdim = y.ndim 
-        if yogdim==1:
-            y = y[:,None] 
-        assert y.size(-2)==self.n.sum() 
-        z = y.transpose(dim0=-2,dim1=-1)
-        zs = z.split(self.n.tolist(),dim=-1)
-        zst = [self.fgp.ft(zs[i]) for i in range(self.fgp.num_tasks)]
-        zst,_ = self._gram_matrix_solve_tilde_to_tilde(zst)
-        zs = [self.fgp.ift(zst[i]).real for i in range(self.fgp.num_tasks)]
-        z = torch.cat(zs,dim=-1).transpose(dim0=-2,dim1=-1)
+        assert y.size(-1)==self.n.sum() 
+        ys = y.split(self.n.tolist(),dim=-1)
+        yst = [self.fgp.ft(ys[i]) for i in range(self.fgp.num_tasks)]
+        yst,_ = self._gram_matrix_solve_tilde_to_tilde(yst)
+        ys = [self.fgp.ift(yst[i]).real for i in range(self.fgp.num_tasks)]
+        y = torch.cat(ys,dim=-1)
         if os.environ.get("FASTGP_DEBUG")=="True":
             _,logdet = self()
             kmat_tasks = self.fgp.gram_matrix_tasks
             kmat = torch.vstack([torch.hstack([kmat_tasks[ell0,ell1]*self.fgp._kernel(self.fgp.get_x(ell0,self.n[ell0])[:,None,:],self.fgp.get_x(ell1,self.n[ell1])[None,:,:]) for ell1 in range(self.fgp.num_tasks)]) for ell0 in range(self.fgp.num_tasks)])
             kmat += self.fgp.noise*torch.eye(kmat.size(0))
             assert torch.allclose(logdet,torch.logdet(kmat),rtol=1e-3)
-            ztrue = torch.linalg.solve(kmat,y)
-            assert torch.allclose(ztrue,z,atol=1e-3)
-        if yogdim==1:
-            z = z[:,0]
-        return z
+            ytrue = torch.linalg.solve(kmat,y)
+            assert torch.allclose(ytrue,y,atol=1e-3)
+        return y
     def _gram_matrix_solve_tilde_to_tilde(self, zst):
         inv,logdet = self()
         zsto = [zst[o] for o in self.task_order]
         z = torch.cat(zsto,dim=-1).reshape(list(zsto[0].shape[:-1])+[1,-1,self.n[self.n>0].min()])
-        z = (z*inv).sum(-2)
         z = z.reshape(list(z.shape[:-2])+[-1])
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
@@ -296,7 +289,7 @@ class _CoeffsCache(object):
         self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
         if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
-            self.coeffs = self.fgp.get_inv_log_det_cache().gram_matrix_solve(torch.cat(self.fgp._y,dim=-1)[...,None])[...,0]
+            self.coeffs = self.fgp.get_inv_log_det_cache().gram_matrix_solve(torch.cat(self.fgp._y,dim=-1))
             self._freeze()
             self.n = self.fgp.n.clone()
         return self.coeffs 
