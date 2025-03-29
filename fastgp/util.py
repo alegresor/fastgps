@@ -258,7 +258,9 @@ class _InverseLogDetCache(object):
     def _gram_matrix_solve_tilde_to_tilde(self, zst):
         inv,logdet = self()
         zsto = [zst[o] for o in self.task_order]
-        z = torch.cat(zsto,dim=-1).reshape(list(zsto[0].shape[:-1])+[1,-1,self.n[self.n>0].min()])
+        z = torch.cat(zsto,dim=-1)
+        z = z.reshape(list(zsto[0].shape[:-1])+[1,-1,self.n[self.n>0].min()])
+        z = (z*inv).sum(-2)
         z = z.reshape(list(z.shape[:-2])+[-1])
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
@@ -289,7 +291,8 @@ class _CoeffsCache(object):
         self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
         if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
-            self.coeffs = self.fgp.get_inv_log_det_cache().gram_matrix_solve(torch.cat(self.fgp._y,dim=-1))
+            inv_log_det_cache = self.fgp.get_inv_log_det_cache()
+            self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat(self.fgp._y,dim=-1))
             self._freeze()
             self.n = self.fgp.n.clone()
         return self.coeffs 

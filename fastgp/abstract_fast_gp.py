@@ -67,6 +67,7 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(shape_batch,(list,tuple)): shape_batch = torch.Size(shape_batch)
         assert isinstance(shape_batch,torch.Size)
         self.shape_batch = shape_batch
+        self.ndim_batch = len(self.shape_batch)
         # scale
         assert np.isscalar(scale) or isinstance(scale,torch.Tensor), "scale must be a scalar or torch.Tensor"
         if isinstance(scale,torch.Tensor): shape_scale = scale.shape
@@ -312,11 +313,47 @@ class AbstractFastGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[None,...]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
         pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
+    def post_var(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        """
+        Posterior variance.
+
+        Args:
+            x (torch.Tensor[N,d]): sampling locations
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+
+        Returns:
+            pvar (torch.Tensor[T,N]): posterior variance
+        """
+        if n is None: n = self.n
+        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
+        kmat_tasks = self.gram_matrix_tasks
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
+        if task is None: task = self.default_task
+        inttask = isinstance(task,int)
+        if inttask: task = torch.tensor([task],dtype=int)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
+        kmat_new = self._kernel(x,x)[...,None,:]*kmat_tasks[...,task,task,None]
+        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
+        t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat_perm)
+        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+        diag = kmat_new-(t*kmat).sum(-1)
+        diag[diag<0] = 0 
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
+        return diag[...,0,:] if inttask else diag
     def post_cov(self, x0:torch.Tensor, x1:torch.Tensor, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior covariance. 
@@ -352,61 +389,29 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
-        kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])*kmat_tasks[...,task0,:][...,:,task1][:,:,None,None]
-        kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l,n[l])[None,:,:])*kmat_tasks[task0,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l,n[l])[None,:,:])*kmat_tasks[task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        t = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat2.transpose(dim0=-2,dim1=-1)).transpose(dim0=-2,dim1=-1)
-        kmat = kmat_new-torch.einsum("ikl,jml->ijkm",kmat1,t)
+        kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])[...,None,None,:,:]*kmat_tasks[...,task0,:][...,task1][...,None,None]
+        kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
+        t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat2_perm)
+        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+        kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
         if equal:
             tmesh,nmesh = torch.meshgrid(torch.arange(kmat.size(0),device=self.device),torch.arange(x0.size(0),device=x0.device),indexing="ij")            
             tidx,nidx = tmesh.ravel(),nmesh.ravel()
-            diag = kmat[tidx,tidx,nidx,nidx]
+            diag = kmat[...,tidx,tidx,nidx,nidx]
             diag[diag<0] = 0 
-            kmat[tidx,tidx,nidx,nidx] = diag 
+            kmat[...,tidx,tidx,nidx,nidx] = diag 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         if inttask0 and inttask1:
-            return kmat[0,0]
+            return kmat[...,0,0,:,:]
         elif inttask0 and not inttask1:
-            return kmat[0]
+            return kmat[...,0,:,:,:]
         elif not inttask0 and inttask1:
-            return kmat[:,0]
+            return kmat[...,:,0,:,:]
         else: # not inttask0 and not inttask1
             return kmat
-    def post_var(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
-        """
-        Posterior variance.
-
-        Args:
-            x (torch.Tensor[N,d]): sampling locations
-            task (Union[int,torch.Tensor[T]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-
-        Returns:
-            pvar (torch.Tensor[T,N]): posterior variance
-        """
-        if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
-        assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
-        kmat_tasks = self.gram_matrix_tasks
-        if eval:
-            incoming_grad_enabled = torch.is_grad_enabled()
-            torch.set_grad_enabled(False)
-        if task is None: task = self.default_task
-        inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
-        assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat_new = self._kernel(x,x)[...,None,:]*kmat_tasks[...,task,task,None]
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        t = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat)
-        diag = kmat_new-torch.einsum("til,til->ti",t,kmat)
-        diag[diag<0] = 0 
-        if eval:
-            torch.set_grad_enabled(incoming_grad_enabled)
-        return diag[0] if inttask else diag
     def post_ci(self, x, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior credible interval.
@@ -436,6 +441,7 @@ class AbstractFastGP(torch.nn.Module):
         ci_high = pmean+q*pstd
         return pmean,pvar,q,ci_low,ci_high
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False
         """
         Posterior cubature mean. 
 
@@ -457,12 +463,13 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         coeffs_split = coeffs.split(self.n.tolist(),-1)
-        coeffs_split_scaled = [self.scale*coeffs_split[l][...,None,:]*kmat_tasks[task,l,None] for l in range(self.num_tasks)]
+        coeffs_split_scaled = [self.scale*coeffs_split[...,l][...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
         pcmean = torch.cat(coeffs_split_scaled,-1).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[0] if inttask else pcmean
     def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False 
         """
         Posterior cubature covariance. 
 
@@ -520,6 +527,7 @@ class AbstractFastGP(torch.nn.Module):
         else: #not inttask0 and not inttask1
             return pccov
     def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False 
         """
         Posterior cubature variance. 
 
