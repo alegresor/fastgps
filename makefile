@@ -4,9 +4,9 @@ exportenv:
 	conda env export --no-builds | tail -r | tail -n +2 | tail -r > conda_env.yml
 
 doctests: 
-	pytest --doctest-modules fastgp/ -W ignore
+	pytest --doctest-modules fastgp/ -W ignore --no-header
 
 nbtests:
-	pytest --nbval docs/
+	pytest --nbval docs/ --no-header
 
 tests: doctests nbtests
