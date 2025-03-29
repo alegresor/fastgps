@@ -105,7 +105,7 @@ class _LamCaches(object):
             lam_m = self.fgp.ft(k1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(m-1)
-            self.lam_list[midx] = torch.hstack([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m])/np.sqrt(2)
+            self.lam_list[midx] = torch.cat([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m],-1)/np.sqrt(2)
             if os.environ.get("FASTGP_DEBUG")=="True":
                 k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**m])
                 lam_full = self.fgp.ft(k1_full)
@@ -157,7 +157,7 @@ class _YtildeCache(object):
             ytilde_next = self.fgp.ft(self.fgp._y[self.l][...,self.n:n_double])
             omega_m = self.fgp.get_omega(int(np.log2(self.n)))
             omega_ytilde_next = omega_m*ytilde_next
-            self.ytilde = torch.hstack([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next])/np.sqrt(2)
+            self.ytilde = torch.cat([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next],-1)/np.sqrt(2)
             if os.environ.get("FASTGP_DEBUG")=="True":
                 ytilde_ref = self.fgp.ft(self.fgp._y[self.l][:n_double])
                 assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)

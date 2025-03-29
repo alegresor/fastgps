@@ -256,8 +256,9 @@ class AbstractFastGP(torch.nn.Module):
         ytildes = [self.get_ytilde(i) for i in range(self.num_tasks)]
         ytildescat = torch.cat(ytildes,dim=-1)
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+        inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
-            ztildes,logdet = self.get_inv_log_det_cache()._gram_matrix_solve_tilde_to_tilde(ytildes)
+            ztildes,logdet = inv_log_det_cache._gram_matrix_solve_tilde_to_tilde(ytildes)
             ztildescat = torch.cat(ztildes,dim=-1)
             norm_term = (ytildescat.conj()*ztildescat).real.sum()
             logdet_term = self.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
@@ -345,7 +346,7 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat_new = self._kernel(x,x)[...,None,:]*kmat_tasks[...,task,task,None]
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
         kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
         t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -390,8 +391,8 @@ class AbstractFastGP(torch.nn.Module):
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
         kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])[...,None,None,:,:]*kmat_tasks[...,task0,:][...,task1][...,None,None]
-        kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
         kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
         t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat2_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -441,7 +442,6 @@ class AbstractFastGP(torch.nn.Module):
         ci_high = pmean+q*pstd
         return pmean,pvar,q,ci_low,ci_high
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
-        assert False
         """
         Posterior cubature mean. 
 
@@ -463,13 +463,51 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         coeffs_split = coeffs.split(self.n.tolist(),-1)
-        coeffs_split_scaled = [self.scale*coeffs_split[...,l][...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
+        coeffs_split_scaled = [(self.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
         pcmean = torch.cat(coeffs_split_scaled,-1).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
-        return pcmean[0] if inttask else pcmean
+        return pcmean[...,0] if inttask else pcmean
+    def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        """
+        Posterior cubature variance. 
+
+        Args:
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+
+        Returns:
+            pcvar (torch.Tensor[T]): posterior cubature variance
+        """
+        if n is None: n = self.n
+        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        kmat_tasks = self.gram_matrix_tasks
+        inv_log_det_cache = self.get_inv_log_det_cache(n)
+        inv = inv_log_det_cache()[0]
+        to = inv_log_det_cache.task_order
+        nord = n[to]
+        mvec = torch.hstack([torch.zeros(1),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+        nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
+        if eval:
+            incoming_grad_enabled = torch.is_grad_enabled()
+            torch.set_grad_enabled(False)
+        if task is None: task = self.default_task
+        inttask = isinstance(task,int)
+        if inttask: task = torch.tensor([task],dtype=int)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
+        inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]
+        kmat_tasks_left = kmat_tasks[...,task,:][...,:,to].to(self._FTOUTDTYPE)
+        kmat_tasks_right = kmat_tasks[...,to,:][...,:,task].to(self._FTOUTDTYPE)
+        term = torch.einsum("...ij,...jk,...ki->...i",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
+        pcvar = self.scale*kmat_tasks[...,task,task]-self.scale**2*term
+        pcvar[pcvar<0] = 0.
+        if eval:
+            torch.set_grad_enabled(incoming_grad_enabled)
+        return pcvar[...,0] if inttask else pcvar
     def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
-        assert False 
         """
         Posterior cubature covariance. 
 
@@ -506,66 +544,26 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(task0,task1)
-        inv_cut = inv[mvec,:][:,mvec][:,:,0].real
-        kmat_tasks_left = kmat_tasks[task0,:][:,to].to(self._FTOUTDTYPE)
-        kmat_tasks_right = kmat_tasks[to,:][:,task1].to(self._FTOUTDTYPE)
-        term = torch.einsum("ij,jk,kl->il",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
-        pccov = self.scale*kmat_tasks[task0,:][:,task1]-self.scale**2*term
+        inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]
+        kmat_tasks_left = kmat_tasks[...,task0,:][...,:,to].to(self._FTOUTDTYPE)
+        kmat_tasks_right = kmat_tasks[...,to,:][...,:,task1].to(self._FTOUTDTYPE)
+        term = torch.einsum("...ij,...jk,...kl->...il",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
+        pccov = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]-self.scale[...,None]**2*term
         if equal:
-            tvec = torch.arange(pccov.size(0))
-            diag = pccov[tvec,tvec]
+            tvec = torch.arange(pccov.size(-1))
+            diag = pccov[...,tvec,tvec]
             diag[diag<0] = 0. 
-            pccov[tvec,tvec] = diag
+            pccov[...,tvec,tvec] = diag
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         if inttask0 and inttask1:
-            return pccov[0,0]
+            return pccov[...,0,0]
         elif inttask0 and not inttask1:
-            return pccov[0]
+            return pccov[...,0,:]
         elif not inttask0 and inttask1:
-            return pccov[:,0]
+            return pccov[...,:,0]
         else: #not inttask0 and not inttask1
             return pccov
-    def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
-        assert False 
-        """
-        Posterior cubature variance. 
-
-        Args:
-            task (Union[int,torch.Tensor[T]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-
-        Returns:
-            pcvar (torch.Tensor[T]): posterior cubature variance
-        """
-        if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
-        kmat_tasks = self.gram_matrix_tasks
-        inv_log_det_cache = self.get_inv_log_det_cache(n)
-        inv = inv_log_det_cache()[0]
-        to = inv_log_det_cache.task_order
-        nord = n[to]
-        mvec = torch.hstack([torch.zeros(1),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-        nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
-        if eval:
-            incoming_grad_enabled = torch.is_grad_enabled()
-            torch.set_grad_enabled(False)
-        if task is None: task = self.default_task
-        inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
-        assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        inv_cut = inv[mvec,:][:,mvec][:,:,0]
-        kmat_tasks_left = kmat_tasks[task,:][:,to].to(self._FTOUTDTYPE)
-        kmat_tasks_right = kmat_tasks[to,:][:,task].to(self._FTOUTDTYPE)
-        term = torch.einsum("ij,jk,ki->i",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
-        pcvar = self.scale*kmat_tasks[task,task]-self.scale**2*term
-        pcvar[pcvar<0] = 0.
-        if eval:
-            torch.set_grad_enabled(incoming_grad_enabled)
-        return pcvar[0] if inttask else pcvar
     def post_cubature_ci(self, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior cubature credible.
