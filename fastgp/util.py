@@ -7,8 +7,8 @@ class _XXbSeq(object):
         self.fgp = fgp
         self.seq = seq
         self.n = 0
-        self.x = torch.empty((0,seq.d))
-        self.xb = torch.empty((0,seq.d),dtype=self.fgp._XBDTYPE)
+        self.x = torch.empty((0,seq.d),device=self.fgp.device)
+        self.xb = torch.empty((0,seq.d),dtype=self.fgp._XBDTYPE,device=self.fgp.device)
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None)
         if isinstance(i,torch.Tensor):
@@ -30,7 +30,7 @@ class _K1PartsSeq(object):
         self.fgp = fgp
         self.xxb_seq_first = xxb_seq_first
         self.xxb_seq_second = xxb_seq_second
-        self.k1parts = torch.empty((0,fgp.d))
+        self.k1parts = torch.empty((0,fgp.d),device=self.fgp.device)
         self.n = 0
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None)
@@ -56,7 +56,7 @@ class _LamCaches(object):
         self.raw_lengthscales_freeze_list = [None]
         self.raw_noise_freeze_list = [None]
         self._freeze(0)
-        self.lam_list = [torch.empty(0,dtype=self.fgp._FTOUTDTYPE)]
+        self.lam_list = [torch.empty(0,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device)]
     def _frozen_equal(self, i):
         return (
             (self.fgp.raw_scale==self.raw_scale_freeze_list[i]).all() and 
@@ -93,7 +93,7 @@ class _LamCaches(object):
                 self._freeze(0)
             return self.lam_list[0]
         if m>self.m_max:
-            self.lam_list += [torch.empty(2**mm,dtype=self.fgp._FTOUTDTYPE) for mm in range(self.m_max+1,m+1)]
+            self.lam_list += [torch.empty(2**mm,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device) for mm in range(self.m_max+1,m+1)]
             self.raw_scale_freeze_list += [torch.empty_like(self.raw_scale_freeze_list[0])]*(m-self.m_max)
             self.raw_lengthscales_freeze_list += [torch.empty_like(self.raw_lengthscales_freeze_list[0])]*(m-self.m_max)
             self.raw_noise_freeze_list += [torch.empty_like(self.raw_noise_freeze_list[0])]*(m-self.m_max)

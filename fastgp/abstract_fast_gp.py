@@ -56,8 +56,8 @@ class AbstractFastGP(torch.nn.Module):
         self.d = seqs[0].d
         assert all(seqs[i].d==self.d for i in range(self.num_tasks))
         self.seqs = seqs
-        self.n = torch.zeros(self.num_tasks,dtype=int)
-        self.m = -1*torch.ones(self.num_tasks,dtype=int)
+        self.n = torch.zeros(self.num_tasks,dtype=int,device=self.device)
+        self.m = -1*torch.ones(self.num_tasks,dtype=int,device=self.device)
         # alpha
         assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self.d,)), "alpha should be an int or a torch.Tensor of length d"
         if np.isscalar(alpha):
@@ -134,7 +134,7 @@ class AbstractFastGP(torch.nn.Module):
         self.ft = ft
         self.ift = ift
         # storaget and dynamic caches
-        self._y = [torch.empty(0) for l in range(self.num_tasks)]
+        self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
@@ -155,7 +155,7 @@ class AbstractFastGP(torch.nn.Module):
         Returns:
             x_next (Union[torch.Tensor,List]): next samples in the sequence
         """
-        if isinstance(n,int): n = torch.tensor([n],dtype=int) 
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device) 
         if isinstance(n,list): n = torch.tensor(n,dtype=int)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
@@ -181,7 +181,7 @@ class AbstractFastGP(torch.nn.Module):
         assert all(y_next[i].shape[:-1]==self.shape_batch for i in range(len(y_next)))
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
-        self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int)
+        self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
         assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
         self.m = torch.where(self.n==0,-1,torch.log2(self.n)).to(int)
     def fit(self,
@@ -333,7 +333,7 @@ class AbstractFastGP(torch.nn.Module):
             pvar (torch.Tensor[T,N]): posterior variance
         """
         if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         kmat_tasks = self.gram_matrix_tasks
@@ -371,7 +371,7 @@ class AbstractFastGP(torch.nn.Module):
             pcov (torch.Tensor[T1,T2,N,M]): posterior covariance matrix
         """
         if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         assert x0.ndim==2 and x0.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert x1.ndim==2 and x1.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
@@ -481,14 +481,14 @@ class AbstractFastGP(torch.nn.Module):
             pcvar (torch.Tensor[T]): posterior cubature variance
         """
         if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         inv = inv_log_det_cache()[0]
         to = inv_log_det_cache.task_order
         nord = n[to]
-        mvec = torch.hstack([torch.zeros(1),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+        mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
         nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
@@ -521,14 +521,14 @@ class AbstractFastGP(torch.nn.Module):
             pcvar (torch.Tensor[T1,T2]): posterior cubature covariance
         """
         if n is None: n = self.n
-        if isinstance(n,int): n = torch.tensor([n],dtype=int)
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         inv = inv_log_det_cache()[0]
         to = inv_log_det_cache.task_order
         nord = n[to]
-        mvec = torch.hstack([torch.zeros(1),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+        mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
         nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
@@ -684,7 +684,7 @@ class AbstractFastGP(torch.nn.Module):
         if ntup not in self.inv_log_det_cache_dict.keys():
             self.inv_log_det_cache_dict[ntup] = _InverseLogDetCache(self,n)
         for key in list(self.inv_log_det_cache_dict.keys()):
-            if (torch.tensor(key)<self.n).any():
+            if (torch.tensor(key)<self.n.cpu()).any():
                 del self.inv_log_det_cache_dict[key]
         return self.inv_log_det_cache_dict[ntup]
     def get_inv_log_det(self, n=None):

@@ -9,7 +9,7 @@ import pandas as pd
 # os.environ["TORCH_LOGS"] = "+dynamo"
 # os.environ["TORCHDYNAMO_VERBOSE"] = "1"
 
-os.environ["FASTGP_DEBUG"] = "True"
+#os.environ["FASTGP_DEBUG"] = "True"
 
 import torch
 torch.set_default_dtype(torch.float64)

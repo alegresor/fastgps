@@ -264,7 +264,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
     def get_omega(self, m):
         return 1
     def _sample(self, seq, n_min, n_max):
-        _x = torch.from_numpy(seq.gen_samples(n_min=n_min,n_max=n_max,return_binary=True).astype(np.int64)).to(self.device)
+        _x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
         x = self._convert_from_b(_x)
         return x,_x
     def _convert_to_b(self, x):

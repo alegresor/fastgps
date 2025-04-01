@@ -261,7 +261,7 @@ class FastGPLattice(AbstractFastGP):
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
     def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq.gen_samples(n_min=n_min,n_max=n_max)).to(torch.get_default_dtype()).to(self.device)
+        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
         return x,x
     @property
     def const_for_kernel(self):
