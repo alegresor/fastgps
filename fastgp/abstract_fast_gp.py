@@ -528,7 +528,7 @@ class AbstractFastGP(torch.nn.Module):
         inv = inv_log_det_cache()[0]
         to = inv_log_det_cache.task_order
         nord = n[to]
-        mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+        mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
         nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
