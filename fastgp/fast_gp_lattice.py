@@ -85,10 +85,10 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_var()
         tensor(3.1823e-06)
 
-        >>> pcmean,pcvar,q,cci_low,cci_high = fgp.post_cubature_ci(confidence=0.99)
-        >>> cci_low
+        >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> pcci_low
         tensor(20.1796)
-        >>> cci_high
+        >>> pcci_high
         tensor(20.1888)
 
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)

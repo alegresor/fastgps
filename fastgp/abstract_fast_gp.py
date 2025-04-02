@@ -413,7 +413,32 @@ class AbstractFastGP(torch.nn.Module):
             return kmat[...,:,0,:,:]
         else: # not inttask0 and not inttask1
             return kmat
-    def post_ci(self, x, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
+    def post_error(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
+        """
+        Posterior error. 
+
+        Args:
+            x (torch.Tensor[N,d]): sampling locations
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+            confidence (float): confidence level in $(0,1)$ for the credible interval
+
+        Returns:
+            cvar (torch.Tensor[T]): posterior variance
+            quantile (np.float64):
+                ```python
+                scipy.stats.norm.ppf(1-(1-confidence)/2)
+                ```
+            perror (torch.Tensor[T]): posterior error
+        """
+        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
+        pvar = self.post_var(x,task=task,n=n,eval=eval,)
+        pstd = torch.sqrt(pvar)
+        perror = q*pstd
+        return pvar,q,perror
+    def post_ci(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior credible interval.
 
@@ -430,17 +455,16 @@ class AbstractFastGP(torch.nn.Module):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
-            ci_low (torch.Tensor[...,T,N]): credible interval lower bound
-            ci_high (torch.Tensor[...,T,N]): credible interval upper bound
+            pci_low (torch.Tensor[...,T,N]): posterior credible interval lower bound
+            pci_high (torch.Tensor[...,T,N]): posterior credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
-        pmean = self.post_mean(x,task=task,eval=eval) 
-        pvar = self.post_var(x,task=task,eval=eval)
-        pstd = torch.sqrt(pvar)
-        ci_low = pmean-q*pstd 
-        ci_high = pmean+q*pstd
-        return pmean,pvar,q,ci_low,ci_high
+        pmean = self.post_mean(x,task=task,eval=eval)
+        pvar,q,perror = self.post_error(x,task=task,confidence=confidence)
+        pci_low = pmean-q*perror 
+        pci_high = pmean+q*perror
+        return pmean,pvar,q,pci_low,pci_high
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature mean. 
@@ -564,6 +588,30 @@ class AbstractFastGP(torch.nn.Module):
             return pccov[...,:,0]
         else: #not inttask0 and not inttask1
             return pccov
+    def post_cubature_error(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
+        """
+        Posterior cubature error. 
+
+        Args:
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+            confidence (float): confidence level in $(0,1)$ for the credible interval
+
+        Returns:
+            pcvar (torch.Tensor[T]): posterior cubature variance
+            quantile (np.float64):
+                ```python
+                scipy.stats.norm.ppf(1-(1-confidence)/2)
+                ```
+            pcerror (torch.Tensor[T]): posterior cubature error
+        """
+        assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
+        q = scipy.stats.norm.ppf(1-(1-confidence)/2)
+        pcvar = self.post_cubature_var(task=task,n=n,eval=eval)
+        pcstd = torch.sqrt(pcvar)
+        pcerror = q*pcstd
+        return pcvar,q,pcerror
     def post_cubature_ci(self, task:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior cubature credible.
@@ -580,17 +628,16 @@ class AbstractFastGP(torch.nn.Module):
                 ```python
                 scipy.stats.norm.ppf(1-(1-confidence)/2)
                 ```
-            cci_low (torch.Tensor[...,T]): scalar credible interval lower bound
-            cci_high (torch.Tensor[...,T]): scalar credible interval upper bound
+            pcci_low (torch.Tensor[...,T]): posterior cubature credible interval lower bound
+            pcci_high (torch.Tensor[...,T]): posterior cubature credible interval upper bound
         """
         assert np.isscalar(confidence) and 0<confidence<1, "confidence must be between 0 and 1"
         q = scipy.stats.norm.ppf(1-(1-confidence)/2)
-        pmean = self.post_cubature_mean(task=task,eval=eval) 
-        pvar = self.post_cubature_var(task=task,eval=eval)
-        pstd = torch.sqrt(pvar)
-        ci_low = pmean-q*pstd 
-        ci_high = pmean+q*pstd 
-        return pmean,pvar,q,ci_low,ci_high
+        pcmean = self.post_cubature_mean(task=task,eval=eval) 
+        pcvar,q,pcerror = self.post_cubature_error(task=task,confidence=confidence,eval=eval)
+        pcci_low = pcmean-pcerror
+        pcci_high = pcmean+pcerror
+        return pcmean,pcvar,q,pcci_low,pcci_high
     @property
     def scale(self):
         """

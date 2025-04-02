@@ -83,10 +83,10 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> fgp.post_cubature_var()
         tensor(0.0002)
 
-        >>> pcmean,pcvar,q,cci_low,cci_high = fgp.post_cubature_ci(confidence=0.99)
-        >>> cci_low
+        >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
+        >>> pcci_low
         tensor(20.1564)
-        >>> cci_high
+        >>> pcci_high
         tensor(20.2228)
         
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
