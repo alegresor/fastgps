@@ -114,7 +114,7 @@ class _LamCaches(object):
         return self.lam_list[midx]
     def __getitem__(self, m):
         lam = self.__getitem__no_delete(m)
-        while self.m_min<self.fgp.m[self.l0]:
+        while self.m_min<max(self.fgp.m[self.l0],self.fgp.m[self.l1]):
             del self.lam_list[0]
             del self.raw_scale_freeze_list[0]
             del self.raw_lengthscales_freeze_list[0]

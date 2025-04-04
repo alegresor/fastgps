@@ -184,6 +184,9 @@ class AbstractFastGP(torch.nn.Module):
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
         assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
         self.m = torch.where(self.n==0,-1,torch.log2(self.n)).to(int)
+        for key in list(self.inv_log_det_cache_dict.keys()):
+            if (torch.tensor(key)<self.n.cpu()).any():
+                del self.inv_log_det_cache_dict[key]
     def fit(self,
         iterations:int = 5000,
         lr:float = 1e-1,
@@ -730,9 +733,6 @@ class AbstractFastGP(torch.nn.Module):
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
             self.inv_log_det_cache_dict[ntup] = _InverseLogDetCache(self,n)
-        for key in list(self.inv_log_det_cache_dict.keys()):
-            if (torch.tensor(key)<self.n.cpu()).any():
-                del self.inv_log_det_cache_dict[key]
         return self.inv_log_det_cache_dict[ntup]
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
