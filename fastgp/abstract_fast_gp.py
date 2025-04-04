@@ -137,7 +137,7 @@ class AbstractFastGP(torch.nn.Module):
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
-        self.lam_caches = np.array([[_LamCaches(self,l0,l1) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
+        self.lam_caches = np.array([[_LamCaches(self,l0,l1) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
         self.task_cov_cache = _TaskCovCache(self)
         self.coeffs_cache = _CoeffsCache(self)

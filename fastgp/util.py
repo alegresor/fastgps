@@ -199,7 +199,8 @@ class _InverseLogDetCache(object):
                 to0 = self.task_order[l0]
                 for l1 in range(l0,self.fgp.num_tasks):
                     to1 = self.task_order[l1]
-                    lams[l0,l1] = torch.sqrt(n[l1])*kmat_tasks[...,to0,to1,None]*self.fgp.get_lam(to0,to1,n[l0])
+                    lam = self.fgp.get_lam(to0,to1,n[l0]) if to0<=to1 else self.fgp.get_lam(to1,to0,n[l0]).conj()
+                    lams[l0,l1] = torch.sqrt(n[l1])*kmat_tasks[...,to0,to1,None]*lam
             self.logdet = torch.log(torch.abs(lams[0,0])).sum(-1)
             A = (1/lams[0,0])[...,None,None,:]
             for l in range(1,self.fgp.num_tasks):
