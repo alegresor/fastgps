@@ -33,47 +33,59 @@ fs = [lambda x: f_ackley(x,c=0), lambda x: f_ackley(x)]
 num_tasks = len(fs)
 n = torch.tensor([2**4,2**3])
 
-FGPClass = fastgp.FastGPLattice
-seqs = [qp.Lattice(1,seed=7),qp.Lattice(1,seed=11)]
-# FGPClass = fastgp.FastGPDigitalNetB2
-# seqs = [qp.DigitalNetB2(1,seed=7,randomize="DS"),qp.DigitalNetB2(1,seed=11,randomize="DS")]
+seqs_lattice = [qp.Lattice(1,seed=7),qp.Lattice(1,seed=2)]
+seqs_dnb2s = [qp.DigitalNetB2(1,seed=7,randomize="DS"),qp.DigitalNetB2(1,seed=2,randomize="DS")]
 
-xticks = torch.linspace(0,1,101,device=device)[1:-1,None]
+FGPClasses = [fastgp.FastGPLattice,fastgp.FastGPDigitalNetB2]
+
+xticks = torch.linspace(0,1,1001,device=device)[1:-1,None]
 yticks = torch.vstack([fs[i](xticks) for i in range(num_tasks)])
 
-pmeans = torch.empty((num_tasks,len(xticks)))
-ci_lows = torch.empty((num_tasks,len(xticks)))
-ci_highs = torch.empty((num_tasks,len(xticks)))
-fgp_indep = [FGPClass(seqs=seqs[l],device=device) for l in range(num_tasks)]
-for l in range(num_tasks):
-    x_next = fgp_indep[l].get_x_next(n=n[l].item())
-    y_next = torch.vstack([fs[i](x_next) for i in range(num_tasks)])
-    fgp_indep[l].add_y_next(y_next[l])
-    fgp_indep[l].fit()
-    pmeans[l],_,_,ci_lows[l],ci_highs[l] = fgp_indep[l].post_ci(xticks)
 
-fgp_multitask = FGPClass(seqs=seqs,num_tasks=num_tasks,device=device)
-x_next = fgp_multitask.get_x_next(n=n)
-y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
-fgp_multitask.add_y_next(y_next)
-fgp_multitask.fit()
-pmean_mt,_,_,ci_low_mt,ci_high_mt = fgp_multitask.post_ci(xticks)
+pmeans = [torch.empty((num_tasks,len(xticks))) for i in range(2)]
+ci_lows = [torch.empty((num_tasks,len(xticks))) for i in range(2)]
+ci_highs = [torch.empty((num_tasks,len(xticks))) for i in range(2)]
+fgp_indep = [[FGPClass(seqs=seqs[l],device=device) for l in range(num_tasks)] for FGPClass,seqs in zip(FGPClasses,[seqs_lattice,seqs_dnb2s])]
+for i in range(2):
+    for l in range(num_tasks):
+        x_next = fgp_indep[i][l].get_x_next(n=n[l].item())
+        y_next = torch.vstack([fs[i](x_next) for i in range(num_tasks)])
+        fgp_indep[i][l].add_y_next(y_next[l])
+        fgp_indep[i][l].fit()
+        pmeans[i][l],_,_,ci_lows[i][l],ci_highs[i][l] = fgp_indep[i][l].post_ci(xticks)
 
-fig,ax = pyplot.subplots(nrows=1,ncols=num_tasks,figsize=(WIDTH,WIDTH/3),sharex=True,sharey=True)
-for l in range(num_tasks):
-    ax[l].plot(xticks[:,0].cpu(),yticks[l].cpu(),color="k",linewidth=LINEWIDTH)
-    ax[l].scatter(fgp_indep[l].x[:,0].cpu(),fgp_indep[l].y.cpu(),color="k",s=MARKERSIZE)
-pltmin = min([ci_lows[l].min() for l in range(num_tasks)]+[ci_low_mt.min()])
-pltmax = max([ci_highs[l].max() for l in range(num_tasks)]+[ci_high_mt.max()])
-ax[0].set_ylim([pltmin-0*(pltmax-pltmin),pltmax+0*(pltmax-pltmin)])
+fgp_multitask = [FGPClass(seqs=seqs,num_tasks=num_tasks,device=device) for FGPClass,seqs in zip(FGPClasses,[seqs_lattice,seqs_dnb2s])]
+pmean_mt = [None for i in range(2)]
+ci_low_mt = [None for i in range(2)]
+ci_high_mt = [None for i in range(2)]
+for i in range(2):
+    x_next = fgp_multitask[i].get_x_next(n=n)
+    y_next = [fs[i](x_next[i]) for i in range(num_tasks)]
+    fgp_multitask[i].add_y_next(y_next)
+    fgp_multitask[i].fit()
+    pmean_mt[i],_,_,ci_low_mt[i],ci_high_mt[i] = fgp_multitask[i].post_ci(xticks)
+
+fig,ax = pyplot.subplots(nrows=2,ncols=num_tasks,figsize=(WIDTH,WIDTH/num_tasks*2/1.5),sharex=True,sharey="row")
+ax = ax.reshape((2,num_tasks))
+for i in range(2):
+    for l in range(num_tasks):
+        ax[i,l].plot(xticks[:,0].cpu(),yticks[l].cpu(),color="k",linewidth=LINEWIDTH)
+        ax[i,l].scatter(fgp_indep[i][l].x[:,0].cpu(),fgp_indep[i][l].y.cpu(),color="k",s=MARKERSIZE)
+    pltmin = min([ci_lows[i][l].min() for l in range(num_tasks)]+[ci_low_mt[i].min()])
+    pltmax = max([ci_highs[i][l].max() for l in range(num_tasks)]+[ci_high_mt[i].max()])
+    ax[i,0].set_ylim([pltmin-.05*(pltmax-pltmin),pltmax+.05*(pltmax-pltmin)])
+ax[0,0].set_ylabel("Lattice + SI Kernel",fontsize="xx-large")
+ax[1,0].set_ylabel("Digital Net + DSI Kernel",fontsize="xx-large")
 fig.savefig("example_multitask_0.pdf",bbox_inches="tight")
-for l in range(num_tasks):
-    ax[l].plot(xticks[:,0].cpu(),pmeans[l].cpu(),color=colors[0],linewidth=LINEWIDTH)
-    ax[l].fill_between(xticks[:,0].cpu(),ci_lows[l].cpu(),ci_highs[l].cpu(),color=colors[0],alpha=_alpha,label="independent GPs")
-ax[0].legend(frameon=False,loc="upper left",ncols=2,fontsize="xx-large") 
+for i in range(2):
+    for l in range(num_tasks):
+        ax[i,l].plot(xticks[:,0].cpu(),pmeans[i][l].cpu(),color=colors[0],linewidth=LINEWIDTH)
+        ax[i,l].fill_between(xticks[:,0].cpu(),ci_lows[i][l].cpu(),ci_highs[i][l].cpu(),color=colors[0],alpha=_alpha,label="independent GPs")
+    ax[i,0].legend(frameon=False,loc="upper left",ncols=2,fontsize="xx-large") 
 fig.savefig("example_multitask_1.pdf",bbox_inches="tight")
-for l in range(num_tasks):
-    ax[l].plot(xticks[:,0].cpu(),pmean_mt[l].cpu(),color=colors[1],linewidth=LINEWIDTH)
-    ax[l].fill_between(xticks[:,0].cpu(),ci_low_mt[l].cpu(),ci_high_mt[l].cpu(),color=colors[1],alpha=_alpha,label="MIGP")
-ax[0].legend(frameon=False,loc="upper left",ncols=2,fontsize="xx-large") 
+for i in range(2):
+    for l in range(num_tasks):
+        ax[i,l].plot(xticks[:,0].cpu(),pmean_mt[i][l].cpu(),color=colors[1],linewidth=LINEWIDTH)
+        ax[i,l].fill_between(xticks[:,0].cpu(),ci_low_mt[i][l].cpu(),ci_high_mt[i][l].cpu(),color=colors[1],alpha=_alpha,label="MTGP")
+    ax[i,0].legend(frameon=False,loc="upper left",ncols=2,fontsize="xx-large") 
 fig.savefig("example_multitask_2.pdf",bbox_inches="tight")
