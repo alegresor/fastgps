@@ -131,8 +131,8 @@ class AbstractFastGP(torch.nn.Module):
         if requires_grad_noise_task_kernel is None: requires_grad_noise_task_kernel = self.num_tasks>1
         self.raw_noise_task_kernel = torch.nn.Parameter(tfs_noise_task_kernel[0](noise_task_kernel),requires_grad=requires_grad_noise_task_kernel)
         # fast transforms 
-        self.ft = ft
-        self.ift = ift
+        self.ft_unstable = ft
+        self.ift_unstable = ift
         # storaget and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
@@ -155,7 +155,7 @@ class AbstractFastGP(torch.nn.Module):
         Returns:
             x_next (Union[torch.Tensor,List]): next samples in the sequence
         """
-        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device) 
+        if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
         if isinstance(n,list): n = torch.tensor(n,dtype=int)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
@@ -748,3 +748,13 @@ class AbstractFastGP(torch.nn.Module):
         return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
     def _kernel(self, x:torch.Tensor, z:torch.Tensor):
         return self._kernel_from_parts(self._kernel_parts(x,z))
+    def ft(self, x):
+        xmean = x.mean(-1)
+        y = self.ft_unstable(x-xmean[...,None])
+        y[...,0] += xmean*np.sqrt(x.size(-1))
+        return y
+    def ift(self, x):
+        xmean = x.mean(-1)
+        y = self.ift_unstable(x-xmean[...,None])
+        y[...,0] += xmean*np.sqrt(x.size(-1))
+        return y
