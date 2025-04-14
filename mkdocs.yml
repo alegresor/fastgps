@@ -3,18 +3,20 @@ nav:
   - Home: index.md
   - API: api.md
   - Standard Examples:
-    - Fast GP DNb2: examples/standard/fgp_dnb2.ipynb
-    - Fast GP lattice: examples/standard/fgp_lattice.ipynb
+    - Fast GP Net: examples/standard/fgp_dnb2.ipynb
+    - Fast GP Lattice: examples/standard/fgp_lattice.ipynb
+    - Fast GP Compare: examples/standard/compare_fgp_dnb2_lattice_plot.ipynb
   - Multitask Examples:
-    - Fast GP DNb2: examples/multitask/fgp_dnb2.ipynb
-    - Fast GP lattice: examples/multitask/fgp_lattice.ipynb
+    - Fast GP Net: examples/multitask/fgp_dnb2.ipynb
+    - Fast GP Lattice: examples/multitask/fgp_lattice.ipynb
+    - Fast GP Compare: examples/multitask/compare_fgp_dnb2_lattice_plot.ipynb
   - Batch Multitask Examples:
-    - Fast GP DNb2: examples/batch_multitask/fgp_dnb2.ipynb
-    - Fast GP lattice: examples/batch_multitask/fgp_lattice.ipynb
+    - Fast GP Net: examples/batch_multitask/fgp_dnb2.ipynb
+    - Fast GP Lattice: examples/batch_multitask/fgp_lattice.ipynb
   
 plugins:
   - mkdocs-jupyter:
-      #ignore_h1_titles: True
+      ignore_h1_titles: True
   - mkdocstrings:
       #enabled: !ENV [ENABLE_MKDOCSTRINGS, true]
       #custom_templates: templates
