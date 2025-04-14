@@ -42,6 +42,8 @@ class AbstractFastGP(torch.nn.Module):
             shape_noise,
             shape_factor_task_kernel, 
             shape_noise_task_kernel,
+            derivatives,
+            derivatives_coeffs,
             ft,
             ift,
         ):
@@ -63,6 +65,18 @@ class AbstractFastGP(torch.nn.Module):
         if np.isscalar(alpha):
             alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
         self.alpha = alpha
+        # derivatives
+        if derivatives is not None or derivatives_coeffs is not None: rank_factor_task_kernel = 0 
+        if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64) for i in range(self.num_tasks)]
+        if isinstance(derivatives,torch.Tensor): derivatives = [derivatives]
+        assert isinstance(derivatives,list) and len(derivatives)==self.num_tasks
+        derivatives = [deriv[None,:] if deriv.ndim==1 else deriv for deriv in derivatives]
+        assert all((derivatives[i].ndim==2 and derivatives[i].size(1)==self.d) for i in range(self.num_tasks))
+        self.derivatives = derivatives
+        if derivatives_coeffs is None: derivatives_coeffs = [torch.ones(len(self.derivatives[i])) for i in range(self.num_tasks)]
+        assert isinstance(derivatives_coeffs,list) and len(derivatives_coeffs)==self.num_tasks
+        assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(self.derivatives[i]) for i in range(self.num_tasks))
+        self.derivatives_coeffs = derivatives_coeffs
         # shape_batch 
         if isinstance(shape_batch,(list,tuple)): shape_batch = torch.Size(shape_batch)
         assert isinstance(shape_batch,torch.Size)
@@ -133,15 +147,20 @@ class AbstractFastGP(torch.nn.Module):
         # fast transforms 
         self.ft_unstable = ft
         self.ift_unstable = ift
-        # storaget and dynamic caches
+        # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
-        self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
-        self.lam_caches = np.array([[_LamCaches(self,l0,l1) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
+        self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1],self.derivatives[l0],self.derivatives[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object) # TODO: remove lower tri objs? 
+        self.lam_caches = np.array([[_LamCaches(self,l0,l1,self.derivatives[l0],self.derivatives[l1],self.derivatives_coeffs[l0],self.derivatives_coeffs[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
         self.task_cov_cache = _TaskCovCache(self)
         self.coeffs_cache = _CoeffsCache(self)
         self.inv_log_det_cache_dict = {}
+        # derivative multitask setting checks 
+        if any((self.derivatives[i]>0).any() or (self.derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
+            self.raw_noise_task_kernel.requires_grad_(False)
+            self.raw_factor_task_kernel.requires_grad_(False)
+            assert (self.gram_matrix_tasks==torch.eye(self.num_tasks,device=self.device)).all()
         # MLL setup
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
@@ -317,7 +336,7 @@ class AbstractFastGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l)[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat = torch.cat([torch.cat([kmat_tasks[...,task[l0],l1,None,None]*self._kernel(x[:,None,:],self.get_xb(l1)[None,:,:],self.derivatives[task[l0]],self.derivatives[l1],self.derivatives_coeffs[task[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
         pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -348,8 +367,9 @@ class AbstractFastGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat_new = self._kernel(x,x)[...,None,:]*kmat_tasks[...,task,task,None]
-        kmat = torch.cat([self._kernel(x[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat_new = torch.cat([kmat_tasks[...,task[l0],task[l0],None,None]*self._kernel(x,x,self.derivatives[task[l0]],self.derivatives[task[l0]],self.derivatives_coeffs[task[l0]],self.derivatives_coeffs[task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+        #kmat_new = self._kernel(x,x,self.derivatives[task])[...,None,:]*kmat_tasks[...,task,task,None]
+        kmat = torch.cat([torch.cat([kmat_tasks[...,task[l0],l1,None,None]*self._kernel(x[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],self.derivatives[task[l0]],self.derivatives[l1],self.derivatives_coeffs[task[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
         kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
         t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -393,9 +413,9 @@ class AbstractFastGP(torch.nn.Module):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
-        kmat_new = self._kernel(x0[:,None,:],x1[None,:,:])[...,None,None,:,:]*kmat_tasks[...,task0,:][...,task1][...,None,None]
-        kmat1 = torch.cat([self._kernel(x0[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
-        kmat2 = kmat1 if equal else torch.cat([self._kernel(x1[:,None,:],self.get_xb(l,n=n[l])[None,:,:])[...,None,:,:]*kmat_tasks[...,task1,l,None,None] for l in range(self.num_tasks)],dim=-1)
+        kmat_new = torch.cat([torch.cat([kmat_tasks[...,task0[l0],task1[l1],None,None,None,None]*self._kernel(x0[:,None,:],x1[None,:,:],self.derivatives[task0[l0]],self.derivatives[task1[l1]],self.derivatives_coeffs[task0[l0]],self.derivatives_coeffs[task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
+        kmat1 = torch.cat([torch.cat([kmat_tasks[...,task0[l0],l1,None,None]*self._kernel(x0[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],self.derivatives[task0[l0]],self.derivatives[l1],self.derivatives_coeffs[task0[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+        kmat2 = kmat1 if equal else torch.cat([torch.cat([kmat_tasks[...,task1[l0],l1,None,None]*self._kernel(x1[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],self.derivatives[task1[l0]],self.derivatives[l1],self.derivatives_coeffs[task1[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
         kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
         t_perm = self.get_inv_log_det_cache(n).gram_matrix_solve(kmat2_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -737,17 +757,27 @@ class AbstractFastGP(torch.nn.Module):
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache()
-    def _kernel_parts(self, x, z):
-        return self._kernel_parts_from_delta(self._ominus(x,z))
-    def _kernel_from_parts(self, parts):
+    def _kernel_parts(self, x, z, beta0, beta1):
+        assert x.size(-1)==self.d and z.size(-1)==self.d and beta0.ndim==2 and beta0.size(1)==self.d and beta1.ndim==2 and beta1.size(1)==self.d
+        delta = self._ominus(x,z)
+        parts = torch.empty(list(delta.shape)[:-1]+[len(beta0),len(beta1)]+[delta.size(-1)])
+        for _t0 in range(len(beta0)):
+            for _t1 in range(len(beta1)):
+                parts[...,_t0,_t1,:] = self._kernel_parts_from_delta(delta,beta0[_t0],beta1[_t1])
+        return parts
+    def _kernel_from_parts(self, parts, beta0, beta1, c0, c1):
+        assert c0.ndim==1 and c1.ndim==1
+        assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
+        assert parts.shape[-3:]==(len(c0),len(c1),self.d)
         ndim = parts.ndim
         scale = self.scale.reshape(self.scale.shape+torch.Size([1]*(ndim-2))) 
         lengthscales = self.lengthscales.reshape(self.lengthscales.shape[:-1]+torch.Size([1]*(ndim-1)+[self.lengthscales.size(-1)]))
-        return scale*(1+lengthscales*parts).prod(-1)
-    def _kernel_from_delta(self, delta):
-        return self._kernel_from_parts(self._kernel_parts_from_delta(delta))
-    def _kernel(self, x:torch.Tensor, z:torch.Tensor):
-        return self._kernel_from_parts(self._kernel_parts(x,z))
+        ind = ((beta0[:,None,:]+beta1[None,:,:])==0).to(torch.int64)
+        terms = scale*(ind+lengthscales*parts).prod(-1)
+        vals = ((terms*c1).sum(-1)*c0).sum(-1)
+        return vals
+    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
+        return self._kernel_from_parts(self._kernel_parts(x,z,beta0,beta1),beta0,beta1,c0,c1)
     def ft(self, x):
         xmean = x.mean(-1)
         y = self.ft_unstable(x-xmean[...,None])

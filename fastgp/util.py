@@ -26,11 +26,14 @@ class _XXbSeq(object):
         return self.x[i],self.xb[i]
 
 class _K1PartsSeq(object):
-    def __init__(self, fgp, xxb_seq_first, xxb_seq_second):
+    def __init__(self, fgp, xxb_seq_first, xxb_seq_second, beta, kappa):
         self.fgp = fgp
         self.xxb_seq_first = xxb_seq_first
         self.xxb_seq_second = xxb_seq_second
-        self.k1parts = torch.empty((0,fgp.d),device=self.fgp.device)
+        assert beta.ndim==2 and beta.size(-1)==self.fgp.d and kappa.ndim==2 and kappa.size(-1)==self.fgp.d
+        self.beta = beta 
+        self.kappa = kappa
+        self.k1parts = torch.empty((0,len(self.beta),len(self.kappa),self.fgp.d),device=self.fgp.device)
         self.n = 0
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None)
@@ -41,16 +44,22 @@ class _K1PartsSeq(object):
         if i.stop>self.n:
             _,xb_next = self.xxb_seq_first[self.n:i.stop]
             _,xb0 = self.xxb_seq_second[:1]
-            k1parts_next = self.fgp._kernel_parts(xb_next,xb0)
-            self.k1parts = torch.vstack([self.k1parts,k1parts_next])
+            k1parts_next = self.fgp._kernel_parts(xb_next,xb0,self.beta,self.kappa)
+            self.k1parts = torch.cat([self.k1parts,k1parts_next],dim=0)
             self.n = i.stop
         return self.k1parts[i]
 
 class _LamCaches(object):
-    def __init__(self, fgp, l0, l1):
+    def __init__(self, fgp, l0, l1, beta0, beta1, c0, c1):
         self.fgp = fgp
         self.l0 = l0
         self.l1 = l1
+        assert c0.ndim==1 and c1.ndim==1
+        assert beta0.shape==(len(c0),self.fgp.d) and beta1.shape==(len(c1),self.fgp.d)
+        self.c0 = c0 
+        self.c1 = c1 
+        self.beta0 = beta0 
+        self.beta1 = beta1
         self.m_min,self.m_max = -1,-1
         self.raw_scale_freeze_list = [None]
         self.raw_lengthscales_freeze_list = [None]
@@ -78,7 +87,7 @@ class _LamCaches(object):
         assert isinstance(m,int)
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
-            k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.l0,self.l1,n=2**m))
+            k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.l0,self.l1,n=2**m),self.beta0,self.beta1,self.c0,self.c1)
             if self.l0==self.l1:
                 k1[...,[0]] += self.fgp.noise
             self.lam_list = [self.fgp.ft(k1)]
@@ -87,7 +96,7 @@ class _LamCaches(object):
             return self.lam_list[0]
         if m==self.m_min:
             if not self._frozen_equal(0) or self._force_recompile():
-                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min])
+                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min],self.beta0,self.beta1,self.c0,self.c1)
                 k1[...,[0]] += self.fgp.noise
                 self.lam_list[0] = self.fgp.ft(k1)
                 self._freeze(0)
@@ -101,13 +110,13 @@ class _LamCaches(object):
         midx = m-self.m_min
         if not self._frozen_equal(midx) or self._force_recompile():
             omega_m = self.fgp.get_omega(m-1)
-            k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][2**(m-1):2**m])
+            k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][2**(m-1):2**m],self.beta0,self.beta1,self.c0,self.c1)
             lam_m = self.fgp.ft(k1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(m-1)
             self.lam_list[midx] = torch.cat([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m],-1)/np.sqrt(2)
             if os.environ.get("FASTGP_DEBUG")=="True":
-                k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**m])
+                k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**m],self.beta0,self.beta1,self.c0,self.c1)
                 lam_full = self.fgp.ft(k1_full)
                 assert torch.allclose(self.lam_list[midx],lam_full,atol=1e-7,rtol=0)
             self._freeze(midx)
