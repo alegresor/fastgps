@@ -13,6 +13,10 @@ nav:
   - Batch Multitask Examples:
     - Fast GP Net: examples/batch_multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/batch_multitask/fgp_lattice.ipynb
+  - Derivative Informed:
+    - Fast GP Net: examples/derivative_informed/fgp_dnb2.ipynb
+    - Fast GP Lattice: examples/derivative_informed/fgp_lattice.ipynb
+    - Fast GP Compare: examples/derivative_informed/compare_fgp_dnb2_lattice_plot.ipynb
   
 plugins:
   - mkdocs-jupyter:
