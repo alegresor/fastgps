@@ -232,13 +232,14 @@ class FastGPLattice(AbstractFastGP):
         assert all(seqs[i].randomize in ['FALSE','SHIFT'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','SHIFT']"
         ft = torch.compile(qmcpy.fftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fftbr_torch
         ift = torch.compile(qmcpy.ifftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.ifftbr_torch
-        self.__const_for_kernel = None
         super().__init__(
+            alpha,
+            ft,
+            ift,
             seqs,
             num_tasks,
             default_task,
             solo_task,
-            alpha,
             scale,
             lengthscales,
             noise,
@@ -264,8 +265,6 @@ class FastGPLattice(AbstractFastGP):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
-            ft,
-            ift,
         )
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)

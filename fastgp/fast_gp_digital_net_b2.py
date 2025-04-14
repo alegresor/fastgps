@@ -237,11 +237,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
         self.t = seqs[0].t_lms
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
+            alpha,
+            ft,
+            ift,
             seqs,
             num_tasks,
             default_task,
             solo_task,
-            alpha,
             scale,
             lengthscales,
             noise,
@@ -267,8 +269,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
-            ft,
-            ift,
         )
         assert (self.alpha<=4).all() and (self.alpha>=2).all()
     def get_omega(self, m):
