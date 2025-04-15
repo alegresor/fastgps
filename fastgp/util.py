@@ -203,7 +203,7 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         if not hasattr(self,"l_chol") or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.gram_matrix_tasks
             kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0,self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
-            kmat_full = [[kmat_tasks[l0,l1]*(kmat_lower_tri[l0][l1] if l0<=l1 else kmat_lower_tri[l1][l0].conj().T) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+            kmat_full = [[kmat_tasks[l0,l1]*(kmat_lower_tri[l0][l1] if l0<=l1 else kmat_lower_tri[l1][l0].T) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
             for l in range(self.fgp.num_tasks):
                 kmat_full[l][l] = kmat_full[l][l]+self.fgp.noise*torch.eye(self.n[l],device=self.fgp.device)
             kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)

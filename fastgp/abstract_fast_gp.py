@@ -33,6 +33,13 @@ class AbstractFastGP(AbstractGP):
     def get_default_optimizer(self, lr):
         if lr is None: lr = 1e-1
         return torch.optim.Rprop(self.parameters(),lr=lr)
+    def get_inv_log_det_cache(self, n=None):
+        if n is None: n = self.n
+        assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
+        ntup = tuple(n.tolist())
+        if ntup not in self.inv_log_det_cache_dict.keys():
+            self.inv_log_det_cache_dict[ntup] = _FastInverseLogDetCache(self,n)
+        return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature mean. 
@@ -171,13 +178,6 @@ class AbstractFastGP(AbstractGP):
     def get_ytilde(self, task):
         assert 0<=task<self.num_tasks
         return self.ytilde_cache[task]()
-    def get_inv_log_det_cache(self, n=None):
-        if n is None: n = self.n
-        assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
-        ntup = tuple(n.tolist())
-        if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = _FastInverseLogDetCache(self,n)
-        return self.inv_log_det_cache_dict[ntup]
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache()
