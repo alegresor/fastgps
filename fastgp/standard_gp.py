@@ -48,20 +48,19 @@ class StandardGP(AbstractGP):
              iter of 5.0e+03 | NMLL       | norm term  | logdet term
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 1.29e+08   | 1.29e+08   | -7.33e+02 
-                    5.00e+00 | 9.12e+07   | 9.12e+07   | -6.80e+02 
-                    1.00e+01 | 4.33e+06   | 4.33e+06   | -3.90e+02 
-                    1.50e+01 | 9.09e+03   | 9.10e+03   | -1.28e+02 
-                    2.00e+01 | 6.60e+03   | 6.57e+03   | -8.91e+01 
-                    2.50e+01 | 6.35e+03   | 6.34e+03   | -1.05e+02 
-                    3.00e+01 | 6.34e+03   | 6.33e+03   | -1.04e+02 
-                    3.50e+01 | 6.34e+03   | 6.33e+03   | -1.06e+02 
-                    4.00e+01 | 6.34e+03   | 6.33e+03   | -1.06e+02 
-                    4.40e+01 | 6.34e+03   | 6.33e+03   | -1.06e+02 
+                    5.00e+00 | 8.39e+07   | 8.39e+07   | -6.61e+02 
+                    1.00e+01 | 9.46e+05   | 9.46e+05   | -2.36e+02 
+                    1.50e+01 | 3.48e+02   | 5.42e+01   | 1.77e+02  
+                    2.00e+01 | 3.51e+02   | 4.36e+01   | 1.90e+02  
+                    2.50e+01 | 3.43e+02   | 5.92e+01   | 1.66e+02  
+                    3.00e+01 | 3.42e+02   | 6.69e+01   | 1.58e+02  
+                    3.50e+01 | 3.42e+02   | 6.49e+01   | 1.60e+02  
+                    3.80e+01 | 3.42e+02   | 6.37e+01   | 1.61e+02  
         >>> list(data.keys())
         ['mll_hist', 'scale_hist', 'lengthscales_hist']
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0666)
+        tensor(0.0562)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -84,15 +83,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(19.9901)
+        tensor(20.0281)
         >>> sgp.post_cubature_var()
-        tensor(0.0001)
+        tensor(0.0043)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.9623)
+        tensor(19.8585)
         >>> pcci_high
-        tensor(20.0178)
+        tensor(20.1976)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -102,7 +101,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1187)
+        tensor(0.2773)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
@@ -111,18 +110,18 @@ class StandardGP(AbstractGP):
         >>> data = sgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0771)
+        tensor(0.0741)
 
         >>> x_next = sgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0654)
+        tensor(0.1026)
 
         >>> data = sgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
         >>> assert len(data)==0
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0515)
+        tensor(0.0516)
 
         >>> pcov_16n = sgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = sgp.post_var(x,n=16*n)
@@ -273,21 +272,20 @@ class StandardGP(AbstractGP):
         assert x.size(-1)==self.d and z.size(-1)==self.d
         incoming_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(True)
-        if (beta0==0).all():
-            xg = x 
-        else:
-            xtileshape = tuple(torch.ceil(torch.tensor(z.shape[:-1])/torch.tensor(x.shape[:-1])).to(int))
-            xgs = [torch.tile(x[...,j].clone().requires_grad_(True),xtileshape) for j in range(self.d)]
-            xg = torch.stack(xgs,dim=-1)
-        if (beta1==0).all():
-            zg = z 
-        else:
-            ztileshape = tuple(torch.ceil(torch.tensor(x.shape[:-1])/torch.tensor(z.shape[:-1])).to(int))
-            zgs = [torch.tile(z[...,j].clone().requires_grad_(True),ztileshape) for j in range(self.d)]
-            zg = torch.stack(zgs,dim=-1)
+        xtileshape = tuple(torch.ceil(torch.tensor(z.shape[:-1])/torch.tensor(x.shape[:-1])).to(int))
+        xgs = [torch.tile(x[...,j].clone().requires_grad_(True),xtileshape) for j in range(self.d)]
+        if (beta0>0).any(): [xgj.requires_grad_(True) for xgj in xgs]
+        xg = torch.stack(xgs,dim=-1)
+        ztileshape = tuple(torch.ceil(torch.tensor(x.shape[:-1])/torch.tensor(z.shape[:-1])).to(int))
+        zgs = [torch.tile(z[...,j].clone().requires_grad_(True),ztileshape) for j in range(self.d)]
+        if (beta1>0).any(): [zgj.requires_grad_(True) for zgj in zgs]
+        zg = torch.stack(zgs,dim=-1)
         y = 0
+        ndim = xg.ndim
+        lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
+        scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
         if self.kernel_class=="gaussian":
-            y_base = torch.exp(-(xg-zg)**2/(2*self.lengthscales)).prod(-1)
+            y_base = scale*torch.exp(-(xg-zg)**2/(2*lengthscales)).prod(-1)
         else:
             raise Exception("kernel_class must be in ['gaussian']")
         for i0 in range(len(c0)):
@@ -325,11 +323,11 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
-        norms = [torch.distributions.Normal(self.get_x(l),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
-        pcmean = (kints*coeffs).sum(-1)
+        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
+        pcmean = (kints*coeffs[...,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
@@ -362,14 +360,14 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
-        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
-        v = torch.cholesky_solve(kints[...,None],l_chol,upper=False)[...,0]
+        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
+        v = torch.cholesky_solve(kints[...,None],l_chol[...,None,:,:],upper=False)[...,0]
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
-        tval = self.scale*kmat_tasks[...,task,task]*t.prod(-1)
+        tval = self.scale*kmat_tasks[...,task,task]*t.prod(-1)[...,None]
         pcvar = tval-(kints*v).sum(-1)
         pcvar[pcvar<0] = 0.
         if eval:
@@ -395,7 +393,6 @@ class StandardGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        inv = inv_log_det_cache()[0]
         l_chol = inv_log_det_cache()[0]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
@@ -412,16 +409,16 @@ class StandardGP(AbstractGP):
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
         equal = torch.equal(task0,task1)
-        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
-        kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
-        v = torch.cholesky_solve(kints1[...,None],l_chol,upper=False)[...,0]
+        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
+        kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
+        v = torch.cholesky_solve(kints1[...,None],l_chol[...,None,:,:],upper=False)[...,0]
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
-        tval = self.scale*kmat_tasks[...,task0,:][...,:,task1]*t.prod(-1)
-        pccov = tval-(kints0[:,None,:]*v[None,:,:]).sum(-1)
+        tval = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]*t.prod(-1)[...,None,None]
+        pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)
         if equal:
             tvec = torch.arange(pccov.size(-1))
             diag = pccov[...,tvec,tvec]
