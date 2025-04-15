@@ -287,6 +287,9 @@ class StandardGP(AbstractGP):
                         y_part_clone = torch.autograd.grad(y_part_clone,zgs[j1],grad_outputs=torch.ones_like(y_part_clone),retain_graph=True)[0]
                 y += c0[i0]*c1[i1]*y_part_clone
         return y
+    def get_default_optimizer(self, lr):
+        if lr is None: lr = 1e-1
+        return torch.optim.Rprop(self.parameters(),lr=lr)
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         assert False, "TODO"
         """

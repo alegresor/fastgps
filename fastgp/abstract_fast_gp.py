@@ -30,6 +30,9 @@ class AbstractFastGP(AbstractGP):
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1],self.derivatives[l0],self.derivatives[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1,self.derivatives[l0],self.derivatives[l1],self.derivatives_coeffs[l0],self.derivatives_coeffs[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
+    def get_default_optimizer(self, lr):
+        if lr is None: lr = 1e-1
+        return torch.optim.Rprop(self.parameters(),lr=lr)
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         """
         Posterior cubature mean. 

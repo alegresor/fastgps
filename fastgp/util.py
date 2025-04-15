@@ -210,12 +210,20 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
             self.l_chol = torch.linalg.cholesky(kmat,upper=False)
             nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
             self.logdet = 2*torch.log(self.l_chol[...,nfrange,nfrange]).sum(-1)
+            self._freeze()
         return self.l_chol,self.logdet
     def gram_matrix_solve(self, y):
         assert y.size(-1)==self.n.sum()
         l_chol,logdet = self()
-        y = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
-        return y
+        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        return v
+    def gram_matrix_solve_y(self):
+        y = torch.cat(self.fgp._y)
+        l_chol,logdet = self()
+        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        norm_term = (y*v).sum()
+        logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+        return norm_term,logdet_term
     
 class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
     def __init__(self, fgp, n):

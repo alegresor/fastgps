@@ -148,7 +148,7 @@ class AbstractGP(torch.nn.Module):
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def fit(self,
         iterations:int = 5000,
-        lr:float = 1e-1,
+        lr:float = None,
         optimizer:torch.optim.Optimizer = None,
         stop_crit_improvement_threshold:float = 1e-1,
         stop_crit_wait_iterations:int = 10,
@@ -184,8 +184,7 @@ class AbstractGP(torch.nn.Module):
         assert (self.n>0).any(), "cannot fit without data"
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
-            assert np.isscalar(lr) and lr>0, "require lr is a positive float"
-            optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
+            optimizer = self.get_default_optimizer(lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
         assert isinstance(store_mll_hist,bool), "require bool store_mll_hist" 
         assert isinstance(store_scale_hist,bool), "require bool store_scale_hist" 
