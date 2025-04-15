@@ -271,15 +271,19 @@ class StandardGP(AbstractGP):
         assert c0.ndim==1 and c1.ndim==1
         assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
         assert x.size(-1)==self.d and z.size(-1)==self.d
+        incoming_grad_enabled = torch.is_grad_enabled()
+        torch.set_grad_enabled(True)
         if (beta0==0).all():
             xg = x 
         else:
-            xgs = [x[...,j].clone().requires_grad_(True) for j in range(self.d)]
+            xtileshape = tuple(torch.ceil(torch.tensor(z.shape[:-1])/torch.tensor(x.shape[:-1])).to(int))
+            xgs = [torch.tile(x[...,j].clone().requires_grad_(True),xtileshape) for j in range(self.d)]
             xg = torch.stack(xgs,dim=-1)
         if (beta1==0).all():
             zg = z 
         else:
-            zgs = [z[...,j].clone().requires_grad_(True) for j in range(self.d)]
+            ztileshape = tuple(torch.ceil(torch.tensor(x.shape[:-1])/torch.tensor(z.shape[:-1])).to(int))
+            zgs = [torch.tile(z[...,j].clone().requires_grad_(True),ztileshape) for j in range(self.d)]
             zg = torch.stack(zgs,dim=-1)
         y = 0
         if self.kernel_class=="gaussian":
@@ -291,11 +295,12 @@ class StandardGP(AbstractGP):
                 y_part = y_base.clone()
                 for j0 in range(self.d):
                     for k in range(beta0[i0,j0]):
-                        y_part = torch.autograd.grad(y_part,xgs[j0],grad_outputs=torch.ones_like(y_part),retain_graph=True)[0]
+                        y_part = torch.autograd.grad(y_part,xgs[j0],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
                 for j1 in range(self.d):
                     for k in range(beta1[i1,j1]):
-                        y_part = torch.autograd.grad(y_part,zgs[j1],grad_outputs=torch.ones_like(y_part),retain_graph=True)[0]
+                        y_part = torch.autograd.grad(y_part,zgs[j1],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
                 y += c0[i0]*c1[i1]*y_part
+        torch.set_grad_enabled(incoming_grad_enabled)
         return y
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
         r"""
