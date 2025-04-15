@@ -161,6 +161,8 @@ class FastGPLattice(AbstractFastGP):
             shape_noise:torch.Size = torch.Size([1]),
             shape_factor_task_kernel:torch.Size = None, 
             shape_noise_task_kernel:torch.Size = None,
+            derivatives:list = None,
+            derivatives_coeffs:list = None,
             compile_fts:bool = False,
             compile_fts_kwargs:dict = {},
             ):
@@ -200,6 +202,11 @@ class FastGPLattice(AbstractFastGP):
             shape_noise (torch.Size): shape of the noise parameter, defaults to `torch.Size([1])`
             shape_factor_task_kernel (torch.Size): shape of the factor for the task kernel, defaults to `torch.Size([num_tasks,r])` where `r` is the rank, see the description of `factor_task_kernel`
             shape_noise_task_kernel (torch.Size): shape of the noise for the task kernel, defaults to `torch.Size([num_tasks])`
+            derivatives (list): list of derivative orders e.g. to include a function and its gradient set 
+                ```python
+                derivatives = [torch.zeros(d,dtype=int)]+[ej for ej in torch.eye(d,dtype=int)]
+                ```
+            derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fftbr_torch,**compile_fts)` and `torch.compile(qmcpy.ifftbr_torch,**compile_fts)`, otherwise use the uncompiled versions
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
         """
@@ -225,13 +232,14 @@ class FastGPLattice(AbstractFastGP):
         assert all(seqs[i].randomize in ['FALSE','SHIFT'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','SHIFT']"
         ft = torch.compile(qmcpy.fftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fftbr_torch
         ift = torch.compile(qmcpy.ifftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.ifftbr_torch
-        self.__const_for_kernel = None
         super().__init__(
+            alpha,
+            ft,
+            ift,
             seqs,
             num_tasks,
             default_task,
             solo_task,
-            alpha,
             scale,
             lengthscales,
             noise,
@@ -255,22 +263,19 @@ class FastGPLattice(AbstractFastGP):
             shape_noise,
             shape_factor_task_kernel, 
             shape_noise_task_kernel,
-            ft,
-            ift,
+            derivatives,
+            derivatives_coeffs,
         )
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
-    def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
-        return x,x
-    @property
-    def const_for_kernel(self):
-        if self.__const_for_kernel is None:
-            self.__const_for_kernel = (-1)**(self.alpha+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(2*self.alpha+1))
-        return self.__const_for_kernel
     def _ominus(self, x, z):
         assert ((0<=x)&(x<=1)).all(), "x should have all elements in [0,1]"
         assert ((0<=z)&(z<=1)).all(), "z should have all elements in [0,1]"
         return (x-z)%1
-    def _kernel_parts_from_delta(self, delta):
-        return self.const_for_kernel*torch.stack([qmcpy.kernel_methods.bernoulli_poly(2*self.alpha[j].item(),delta[...,j]) for j in range(self.d)],-1)
+    def _kernel_parts_from_delta(self, delta, beta, kappa):
+        assert delta.size(-1)==self.d and beta.shape==(self.d,) and kappa.shape==(self.d,)
+        beta_plus_kappa = beta+kappa
+        order = 2*self.alpha-beta_plus_kappa
+        assert (2<=order).all(), "order must all be at least 2, but got order = %s"%str(order)
+        coeff = (-1)**(self.alpha+kappa+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(order+1))
+        return coeff*torch.stack([qmcpy.kernel_methods.bernoulli_poly(order[j].item(),delta[...,j]) for j in range(self.d)],-1)

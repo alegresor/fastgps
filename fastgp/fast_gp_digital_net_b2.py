@@ -159,6 +159,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
             shape_noise:torch.Size = torch.Size([1]),
             shape_factor_task_kernel:torch.Size = None, 
             shape_noise_task_kernel:torch.Size = None,
+            derivatives:list = None,
+            derivatives_coeffs:list = None,
             compile_fts:bool = False,
             compile_fts_kwargs: dict = {},
             ):
@@ -199,6 +201,11 @@ class FastGPDigitalNetB2(AbstractFastGP):
             shape_noise (torch.Size): shape of the noise parameter, defaults to `torch.Size([1])`
             shape_factor_task_kernel (torch.Size): shape of the factor for the task kernel, defaults to `torch.Size([num_tasks,r])` where `r` is the rank, see the description of `factor_task_kernel`
             shape_noise_task_kernel (torch.Size): shape of the noise for the task kernel, defaults to `torch.Size([num_tasks])`
+            derivatives (list): list of derivative orders e.g. to include a function and its gradient set 
+                ```python
+                derivatives = [torch.zeros(d,dtype=int)]+[ej for ej in torch.eye(d,dtype=int)]
+                ```
+            derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
         """
@@ -230,11 +237,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
         self.t = seqs[0].t_lms
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
+            alpha,
+            ft,
+            ift,
             seqs,
             num_tasks,
             default_task,
             solo_task,
-            alpha,
             scale,
             lengthscales,
             noise,
@@ -258,9 +267,10 @@ class FastGPDigitalNetB2(AbstractFastGP):
             shape_noise,
             shape_factor_task_kernel, 
             shape_noise_task_kernel,
-            ft,
-            ift,
+            derivatives,
+            derivatives_coeffs,
         )
+        assert (self.alpha<=4).all() and (self.alpha>=2).all()
     def get_omega(self, m):
         return 1
     def _sample(self, seq, n_min, n_max):
@@ -286,5 +296,10 @@ class FastGPDigitalNetB2(AbstractFastGP):
             return self._convert_to_b(x_or_xb)^z_or_zb
         else: # fp_x and fp_z
             return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
-    def _kernel_parts_from_delta(self, delta):
-        return torch.stack([qmcpy.kernel_methods.weighted_walsh_funcs(self.alpha[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1)
+    def _kernel_parts_from_delta(self, delta, beta, kappa):
+        assert delta.size(-1)==self.d and beta.shape==(self.d,) and kappa.shape==(self.d,)
+        beta_plus_kappa = beta+kappa
+        ind = (beta_plus_kappa>0).to(torch.int64)
+        order = self.alpha-beta_plus_kappa
+        assert (2<=order).all() and (order<=4).all(), "order must all be between 2 and 4, but got order = %s. Try increasing alpha"%str(order)
+        return (-2)**beta_plus_kappa*(ind+torch.stack([qmcpy.kernel_methods.weighted_walsh_funcs(order[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1))
