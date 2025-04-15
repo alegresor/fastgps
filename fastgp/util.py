@@ -173,12 +173,7 @@ class _YtildeCache(object):
             self.n = n_double
         return self.ytilde
 
-class _InverseLogDetCache(object):
-    def __init__(self, fgp, n):
-        self.fgp = fgp
-        self.n = n
-        self.task_order = self.n.argsort(descending=True)
-        self.inv_task_order = self.task_order.argsort()
+class _AbstractInverseLogDetCache(object):
     def _frozen_equal(self):
         return (
             (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
@@ -199,6 +194,35 @@ class _InverseLogDetCache(object):
         self.raw_noise_freeze = self.fgp.raw_noise.clone()
         self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
         self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
+
+class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
+    def __init__(self, fgp, n):
+        self.fgp = fgp
+        self.n = n
+    def __call__(self):
+        if not hasattr(self,"l_chol") or not self._frozen_equal() or self._force_recompile():
+            kmat_tasks = self.fgp.gram_matrix_tasks
+            kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0,self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+            kmat_full = [[kmat_tasks[l0,l1]*(kmat_lower_tri[l0][l1] if l0<=l1 else kmat_lower_tri[l1][l0].conj().T) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+            for l in range(self.fgp.num_tasks):
+                kmat_full[l][l] = kmat_full[l][l]+self.fgp.noise*torch.eye(self.n[l],device=self.fgp.device)
+            kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
+            self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+            nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
+            self.logdet = 2*torch.log(self.l_chol[...,nfrange,nfrange]).sum(-1)
+        return self.l_chol,self.logdet
+    def gram_matrix_solve(self, y):
+        assert y.size(-1)==self.n.sum()
+        l_chol,logdet = self()
+        y = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        return y
+    
+class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
+    def __init__(self, fgp, n):
+        self.fgp = fgp
+        self.n = n
+        self.task_order = self.n.argsort(descending=True)
+        self.inv_task_order = self.task_order.argsort()
     def __call__(self):
         if not hasattr(self,"inv") or not self._frozen_equal() or self._force_recompile():
             n = self.n[self.task_order]

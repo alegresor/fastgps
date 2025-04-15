@@ -1,10 +1,13 @@
-from .abstract_fast_gp import AbstractFastGP
+from .abstract_gp import AbstractGP
+from .util import (
+    _StandardInverseLogDetCache,
+)
 import torch
 import numpy as np
 import qmcpy as qmcpy
 from typing import Tuple,Union
 
-class StandardGP():
+class StandardGP(AbstractGP):
     """
     Standard Gaussian process regression
     
@@ -23,7 +26,7 @@ class StandardGP():
 
         >>> n = 2**10
         >>> d = 2
-        >>> sgp = StandardGP(qmcpy.IIDStdUniform(dimension=d,seed=7))
+        >>> sgp = StandardGP(qmcpy.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
@@ -33,6 +36,7 @@ class StandardGP():
         >>> y = f_ackley(x)
         
         >>> pmean = sgp.post_mean(x)
+
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
@@ -129,6 +133,7 @@ class StandardGP():
         >>> assert torch.allclose(sgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(sgp.post_cubature_var(),pcvar_16n)
     """
+    _XBDTYPE = torch.float64
     _FTOUTDTYPE = torch.float64
     def __init__(self,
             seqs:Union[qmcpy.IIDStdUniform,int],
@@ -136,7 +141,7 @@ class StandardGP():
             seed_for_seq:int = None,
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1., 
-            noise:float = 1e-16,
+            noise:float = 1e-8,
             factor_task_kernel:Union[torch.Tensor,int] = 1.,
             rank_factor_task_kernel:int = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
@@ -159,16 +164,15 @@ class StandardGP():
             shape_noise_task_kernel:torch.Size = None,
             derivatives:list = None,
             derivatives_coeffs:list = None,
+            kernel_class:str = "Gaussian"
             ):
         """
         Args:
-            seqs (Union[int,qmcpy.IIDStdUniform,List]]): list of digital sequence generators in base $b=2$ 
-                with order="NATURAL" and randomize in `["FALSE","DS"]`. If an int `d` is passed in we use 
+            seqs (Union[int,qmcpy.DiscreteDistribution,List]]): list of sequence generators. If an int `d` is passed in we use 
                 ```python
-                [qmcpy.IIDStdUniform(d,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
+                [qmcpy.DigitalNetB2(d,seed=seed) for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
                 ```
-                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info. 
-                If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS_DS"]`. 
+                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#discrete-distribution-class" target="_blank">`qmcpy.DiscreteDistribution` docs</a> for more info. 
             num_tasks (int): number of tasks 
             seed_for_seq (int): seed used for digital net randomization
             scale (float): kernel global scaling parameter
@@ -211,22 +215,17 @@ class StandardGP():
             solo_task = False
             default_task = torch.arange(num_tasks)
         if isinstance(seqs,int):
-            seqs = np.array([qmcpy.DigitalNetB2(seqs,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
-        if isinstance(seqs,qmcpy.DigitalNetB2):
+            seqs = np.array([qmcpy.DigitalNetB2(seqs,seed=seed) for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
+        if isinstance(seqs,qmcpy.DiscreteDistribution):
             seqs = np.array([seqs],dtype=object)
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
-        assert all(isinstance(seqs[i],qmcpy.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qmcpy.DigitalNetB2 instances"
-        assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
-        assert all(seqs[i].t_lms<64 for i in range(num_tasks)), "each seq must have t_lms<64"
-        if num_tasks==1:
-            assert seqs[0].randomize in ['FALSE','DS','LMS','LMS_DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS_DS']"
-        else:
-            assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
-        assert all(seqs[i].t_lms==seqs[0].t_lms for i in range(num_tasks)), "all seqs should have the same t_lms"
-        self.t = seqs[0].t_lms
+        kernel_class = kernel_class.lower()
+        assert kernel_class in ["gaussian"]
+        if kernel_class=="gaussian":
+            self._base_kernel = self._kernel_gaussian
         super().__init__(
             seqs,
             num_tasks,
@@ -258,7 +257,38 @@ class StandardGP():
             derivatives,
             derivatives_coeffs,
         )
-        assert (self.alpha<=4).all() and (self.alpha>=2).all()
+    def _sample(self, seq, n_min, n_max):
+        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(self.device)
+        return x,x
+    def _kernel_gaussian(self, x, z):
+        return torch.exp(-(x-z)**2/(2*self.lengthscales)).prod(-1)
+    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
+        assert c0.ndim==1 and c1.ndim==1
+        assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
+        assert x.size(-1)==self.d and z.size(-1)==self.d
+        if (beta0==0).all():
+            xg = x 
+        else:
+            xgs = [x[...,j].clone().requires_grad_(True) for j in range(self.d)]
+            xg = torch.stack(xgs,dim=-1)
+        if (beta1==0).all():
+            zg = z 
+        else:
+            zgs = [z[...,j].clone().requires_grad_(True) for j in range(self.d)]
+            zg = torch.stack(zgs,dim=-1)
+        y = 0
+        y_part = self._base_kernel(xg,zg)
+        for i0 in range(len(c0)):
+            for i1 in range(len(c1)):
+                y_part_clone = y_part.clone()
+                for j0 in range(self.d):
+                    for k in range(beta0[i0,j0]):
+                        y_part_clone = torch.autograd.grad(y_part_clone,xgs[j0],grad_outputs=torch.ones_like(y_part_clone),retain_graph=True)[0]
+                for j1 in range(self.d):
+                    for k in range(beta1[i1,j1]):
+                        y_part_clone = torch.autograd.grad(y_part_clone,zgs[j1],grad_outputs=torch.ones_like(y_part_clone),retain_graph=True)[0]
+                y += c0[i0]*c1[i1]*y_part_clone
+        return y
     def fit(self,
         iterations:int = 5000,
         lr:float = 1e-1,
@@ -273,6 +303,7 @@ class StandardGP():
         verbose:int = 5,
         verbose_indent:int = 4,
         ):
+        assert False, "TODO"
         """
         Args:
             iterations (int): number of optimization iterations
@@ -366,39 +397,8 @@ class StandardGP():
         if store_noise_hist: data["noise_hist"] = noise_hist
         if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist
         return data
-    def get_omega(self, m):
-        return 1
-    def _sample(self, seq, n_min, n_max):
-        _x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
-        x = self._convert_from_b(_x)
-        return x,_x
-    def _convert_to_b(self, x):
-        return torch.floor((x%1)*2**(self.t)).to(self._XBDTYPE)
-    def _convert_from_b(self, xb):
-        return xb*2**(-self.t)
-    def _ominus(self, x_or_xb, z_or_zb):
-        fp_x = torch.is_floating_point(x_or_xb)
-        fp_z = torch.is_floating_point(z_or_zb)
-        if fp_x:
-            assert ((0<=x_or_xb)&(x_or_xb<=1)).all(), "x should have all elements in [0,1]"
-        if fp_z:
-            assert ((0<=z_or_zb)&(z_or_zb<=1)).all(), "z should have all elements in [0,1]"
-        if (not fp_x) and (not fp_z):
-            return x_or_xb^z_or_zb
-        elif (not fp_x) and fp_z:
-            return x_or_xb^self._convert_to_b(z_or_zb)
-        elif fp_x and (not fp_z):
-            return self._convert_to_b(x_or_xb)^z_or_zb
-        else: # fp_x and fp_z
-            return self._convert_to_b(x_or_xb)^self._convert_to_b(z_or_zb)
-    def _kernel_parts_from_delta(self, delta, beta, kappa):
-        assert delta.size(-1)==self.d and beta.shape==(self.d,) and kappa.shape==(self.d,)
-        beta_plus_kappa = beta+kappa
-        ind = (beta_plus_kappa>0).to(torch.int64)
-        order = self.alpha-beta_plus_kappa
-        assert (2<=order).all() and (order<=4).all(), "order must all be between 2 and 4, but got order = %s. Try increasing alpha"%str(order)
-        return (-2)**beta_plus_kappa*(ind+torch.stack([qmcpy.kernel_methods.weighted_walsh_funcs(order[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1))
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False, "TODO"
         """
         Posterior cubature mean. 
 
@@ -426,6 +426,7 @@ class StandardGP():
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
     def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False, "TODO"
         """
         Posterior cubature variance. 
 
@@ -465,6 +466,7 @@ class StandardGP():
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar[...,0] if inttask else pcvar
     def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        assert False, "TODO"
         """
         Posterior cubature covariance. 
 
@@ -526,7 +528,6 @@ class StandardGP():
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = _InverseLogDetCache(self,n)
+            self.inv_log_det_cache_dict[ntup] = _StandardInverseLogDetCache(self,n)
         return self.inv_log_det_cache_dict[ntup]
-    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
-        return self._kernel_from_parts(self._kernel_parts(x,z,beta0,beta1),beta0,beta1,c0,c1)
+    

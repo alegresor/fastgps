@@ -1,13 +1,10 @@
 from .util import (
-    _CoeffsCache,
-    _InverseLogDetCache,
+    _FastInverseLogDetCache,
     _K1PartsSeq,
     _LamCaches,
-    _TaskCovCache,
     _YtildeCache)
 import torch
 import numpy as np 
-import scipy.stats 
 import os
 from typing import Union,List
 from .abstract_gp import AbstractGP
@@ -30,12 +27,9 @@ class AbstractFastGP(AbstractGP):
         self.ft_unstable = ft
         self.ift_unstable = ift
         # storage and dynamic caches
-        self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1],self.derivatives[l0],self.derivatives[l1]) for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object) # TODO: remove lower tri objs? 
+        self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1],self.derivatives[l0],self.derivatives[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1,self.derivatives[l0],self.derivatives[l1],self.derivatives_coeffs[l0],self.derivatives_coeffs[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
-        self.task_cov_cache = _TaskCovCache(self)
-        self.coeffs_cache = _CoeffsCache(self)
-        self.inv_log_det_cache_dict = {}
     def fit(self,
         iterations:int = 5000,
         lr:float = 1e-1,
@@ -286,7 +280,7 @@ class AbstractFastGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = _InverseLogDetCache(self,n)
+            self.inv_log_det_cache_dict[ntup] = _FastInverseLogDetCache(self,n)
         return self.inv_log_det_cache_dict[ntup]
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
@@ -311,6 +305,9 @@ class AbstractFastGP(AbstractGP):
         vals = ((terms*c1).sum(-1)*c0).sum(-1)
         return vals
     def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
+        assert c0.ndim==1 and c1.ndim==1
+        assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
+        assert x.size(-1)==self.d and z.size(-1)==self.d
         return self._kernel_from_parts(self._kernel_parts(x,z,beta0,beta1),beta0,beta1,c0,c1)
     def ft(self, x):
         xmean = x.mean(-1)

@@ -1,5 +1,7 @@
 from .util import (
     _XXbSeq,
+    _TaskCovCache,
+    _CoeffsCache,
 )
 import torch
 import numpy as np 
@@ -134,6 +136,9 @@ class AbstractGP(torch.nn.Module):
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
+        self.coeffs_cache = _CoeffsCache(self)
+        self.task_cov_cache = _TaskCovCache(self)
+        self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
         if any((self.derivatives[i]>0).any() or (self.derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
             self.raw_noise_task_kernel.requires_grad_(False)
