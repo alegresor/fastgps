@@ -4,8 +4,7 @@ from .util import (
     _LamCaches,
     _YtildeCache)
 import torch
-import numpy as np 
-import os
+import numpy as np
 from typing import Union,List
 from .abstract_gp import AbstractGP
 

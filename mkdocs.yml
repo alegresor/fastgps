@@ -3,9 +3,10 @@ nav:
   - Home: index.md
   - API: api.md
   - Standard Examples:
-    - Fast GP Net: examples/standard/fgp_dnb2.ipynb
-    - Fast GP Lattice: examples/standard/fgp_lattice.ipynb
-    - Compare GPs: examples/standard/compare_gps_plot.ipynb
+    - Fast GP Net: examples/simple/fgp_dnb2.ipynb
+    - Fast GP Lattice: examples/simple/fgp_lattice.ipynb
+    - Standard GP: examples/simple/standard_gp.ipynb
+    - Compare GPs: examples/simple/compare_gps_plot.ipynb
   - Multitask Examples:
     - Fast GP Net: examples/multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/multitask/fgp_lattice.ipynb

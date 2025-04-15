@@ -6,7 +6,6 @@ import torch
 import numpy as np
 import qmcpy as qmcpy
 from typing import Tuple,Union
-import os
 
 class StandardGP(AbstractGP):
     """
@@ -324,7 +323,7 @@ class StandardGP(AbstractGP):
         norms = [torch.distributions.Normal(self.get_x(l),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-2)
+        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
         pcmean = (kints*coeffs).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -361,7 +360,7 @@ class StandardGP(AbstractGP):
         norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-2)
+        kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
         v = torch.cholesky_solve(kints[...,None],l_chol,upper=False)[...,0]
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
@@ -411,8 +410,8 @@ class StandardGP(AbstractGP):
         norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales)) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales)*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
-        kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-2)
-        kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-2)
+        kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
+        kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l] for l in range(self.num_tasks)],dim=-1)
         v = torch.cholesky_solve(kints1[...,None],l_chol,upper=False)[...,0]
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
