@@ -268,9 +268,6 @@ class FastGPLattice(AbstractFastGP):
         )
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
-    def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
-        return x,x
     def _ominus(self, x, z):
         assert ((0<=x)&(x<=1)).all(), "x should have all elements in [0,1]"
         assert ((0<=z)&(z<=1)).all(), "z should have all elements in [0,1]"

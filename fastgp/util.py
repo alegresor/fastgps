@@ -299,6 +299,14 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
         return zst,logdet
+    def gram_matrix_solve_y(self):
+        ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
+        ytildescat = torch.cat(ytildes,dim=-1)
+        ztildes,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+        ztildescat = torch.cat(ztildes,dim=-1)
+        norm_term = (ytildescat.conj()*ztildescat).real.sum()
+        logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+        return norm_term,logdet_term
 
 class _CoeffsCache(object):
     def __init__(self, fgp):

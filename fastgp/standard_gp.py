@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import qmcpy as qmcpy
 from typing import Tuple,Union
+import os
 
 class StandardGP(AbstractGP):
     """
@@ -257,9 +258,6 @@ class StandardGP(AbstractGP):
             derivatives,
             derivatives_coeffs,
         )
-    def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(self.device)
-        return x,x
     def _kernel_gaussian(self, x, z):
         return torch.exp(-(x-z)**2/(2*self.lengthscales)).prod(-1)
     def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
@@ -289,114 +287,6 @@ class StandardGP(AbstractGP):
                         y_part_clone = torch.autograd.grad(y_part_clone,zgs[j1],grad_outputs=torch.ones_like(y_part_clone),retain_graph=True)[0]
                 y += c0[i0]*c1[i1]*y_part_clone
         return y
-    def fit(self,
-        iterations:int = 5000,
-        lr:float = 1e-1,
-        optimizer:torch.optim.Optimizer = None,
-        stop_crit_improvement_threshold:float = 1e-1,
-        stop_crit_wait_iterations:int = 10,
-        store_mll_hist:bool = True, 
-        store_scale_hist:bool = True, 
-        store_lengthscales_hist:bool = True,
-        store_noise_hist:bool = True,
-        store_task_kernel_hist:bool = True,
-        verbose:int = 5,
-        verbose_indent:int = 4,
-        ):
-        assert False, "TODO"
-        """
-        Args:
-            iterations (int): number of optimization iterations
-            lr (float): learning rate for default optimizer
-            optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
-            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by `stop_crit_improvement_threshold` for `stop_crit_wait_iterations` iterations 
-            stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for `stop_crit_improvement_threshold`
-            store_mll_hist (bool): if `True`, store and return iteration data for mll
-            store_scale_hist (bool): if `True`, store and return iteration data for the kernel scale parameter
-            store_lengthscales_hist (bool): if `True`, store and return iteration data for the kernel lengthscale parameters
-            store_noise_hist (bool): if `True`, store and return iteration data for noise
-            store_task_kernel_hist (bool): if `True`, store and return iteration data for the task kernel
-            verbose (int): log every `verbose` iterations, set to `0` for silent mode
-            verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
-            
-        Returns:
-            data (dict): iteration data which, dependeing on storage arguments, may include keys in 
-                ```python
-                ["mll_hist","scale_hist","lengthscales_hist","noise_hist","task_kernel_hist"]
-                ```
-        """
-        assert (self.n>0).any(), "cannot fit without data"
-        assert isinstance(iterations,int) and iterations>=0
-        if optimizer is None:
-            assert np.isscalar(lr) and lr>0, "require lr is a positive float"
-            optimizer = torch.optim.Rprop(self.parameters(),lr=lr)
-        assert isinstance(optimizer,torch.optim.Optimizer)
-        assert isinstance(store_mll_hist,bool), "require bool store_mll_hist" 
-        assert isinstance(store_scale_hist,bool), "require bool store_scale_hist" 
-        assert isinstance(store_lengthscales_hist,bool), "require bool store_lengthscales_hist" 
-        assert isinstance(store_noise_hist,bool), "require bool store_noise_hist"
-        assert isinstance(store_task_kernel_hist,bool), "require bool store_task_kernel_hist"
-        assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
-        assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
-        assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
-        assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
-        logtol = np.log(1+stop_crit_improvement_threshold)
-        if store_mll_hist:
-            mll_hist = torch.empty(iterations+1)
-        store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
-        store_lengthscales_hist = store_lengthscales_hist and self.raw_lengthscales.requires_grad
-        store_noise_hist = store_noise_hist and self.raw_noise.requires_grad
-        store_task_kernel_hist = store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad)
-        if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
-        if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
-        if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
-        if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
-        if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"NMLL","norm term","logdet term")
-            print(" "*verbose_indent+_s)
-            print(" "*verbose_indent+"~"*len(_s))
-        mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
-        stop_crit_best_mll = torch.inf 
-        stop_crit_save_mll = torch.inf 
-        stop_crit_iterations_without_improvement_mll = 0
-        ytildes = [self.get_ytilde(i) for i in range(self.num_tasks)]
-        ytildescat = torch.cat(ytildes,dim=-1)
-        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
-        inv_log_det_cache = self.get_inv_log_det_cache()
-        for i in range(iterations+1):
-            ztildes,logdet = inv_log_det_cache._gram_matrix_solve_tilde_to_tilde(ytildes)
-            ztildescat = torch.cat(ztildes,dim=-1)
-            norm_term = (ytildescat.conj()*ztildescat).real.sum()
-            logdet_term = self.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-            mll = norm_term+logdet_term+mll_const
-            if mll.item()<stop_crit_best_mll:
-                stop_crit_best_mll = mll.item()
-            if (stop_crit_save_mll-mll.item())>logtol:
-                stop_crit_iterations_without_improvement_mll = 0
-                stop_crit_save_mll = stop_crit_best_mll
-            else:
-                stop_crit_iterations_without_improvement_mll += 1
-            break_condition = i==iterations or stop_crit_iterations_without_improvement_mll==stop_crit_wait_iterations
-            if store_mll_hist: mll_hist[i] = mll.item()
-            if store_scale_hist: scale_hist[i] = self.scale.detach().to(scale_hist.device)
-            if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
-            if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
-            if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
-            if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,mll.item(),norm_term.item(),logdet_term.item())
-                print(" "*verbose_indent+_s)
-            if break_condition: break
-            mll.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-        del os.environ["FASTGP_FORCE_RECOMPILE"]
-        data = {}
-        if store_mll_hist: data["mll_hist"] = mll_hist
-        if store_scale_hist: data["scale_hist"] = scale_hist
-        if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist
-        if store_noise_hist: data["noise_hist"] = noise_hist
-        if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist
-        return data
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         assert False, "TODO"
         """
