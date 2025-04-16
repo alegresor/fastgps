@@ -53,7 +53,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
                     4.00e+01 | 3.09e+03   | 1.03e+03   | 1.80e+02  
                     4.30e+01 | 3.09e+03   | 1.03e+03   | 1.84e+02  
         >>> list(data.keys())
-        ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        ['iterations']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0355)
@@ -103,8 +103,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_future)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0259)
 
@@ -114,8 +113,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0191)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0187)
 

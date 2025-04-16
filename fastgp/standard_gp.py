@@ -40,24 +40,24 @@ class StandardGP(AbstractGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.0830)
+        tensor(0.0771)
         >>> torch.linalg.norm(sgp.post_mean(sgp.x)-sgp.y)/torch.linalg.norm(y)
-        tensor(0.0485)
+        tensor(0.0559)
 
         >>> data = sgp.fit()
              iter of 5.0e+03 | NMLL       | norm term  | logdet term
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 1.29e+08   | 1.29e+08   | -7.33e+02 
-                    5.00e+00 | 8.39e+07   | 8.39e+07   | -6.61e+02 
-                    1.00e+01 | 9.46e+05   | 9.46e+05   | -2.36e+02 
-                    1.50e+01 | 3.48e+02   | 5.42e+01   | 1.77e+02  
+                    0.00e+00 | 1.87e+06   | 1.87e+06   | -5.11e+02 
+                    5.00e+00 | 1.25e+06   | 1.25e+06   | -4.71e+02 
+                    1.00e+01 | 1.07e+05   | 1.07e+05   | -2.04e+02 
+                    1.50e+01 | 3.48e+02   | 5.41e+01   | 1.77e+02  
                     2.00e+01 | 3.51e+02   | 4.36e+01   | 1.90e+02  
                     2.50e+01 | 3.43e+02   | 5.92e+01   | 1.66e+02  
                     3.00e+01 | 3.42e+02   | 6.69e+01   | 1.58e+02  
-                    3.50e+01 | 3.42e+02   | 6.49e+01   | 1.60e+02  
+                    3.50e+01 | 3.42e+02   | 6.48e+01   | 1.60e+02  
                     3.80e+01 | 3.42e+02   | 6.37e+01   | 1.61e+02  
         >>> list(data.keys())
-        ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        ['iterations']
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0562)
@@ -83,13 +83,13 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.0281)
+        tensor(20.0279)
         >>> sgp.post_cubature_var()
         tensor(0.0043)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.8585)
+        tensor(19.8582)
         >>> pcci_high
         tensor(20.1976)
         
@@ -101,27 +101,25 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.2773)
+        tensor(0.1060)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
         >>> assert torch.allclose(sgp.post_cubature_var(),pcvar_future)
 
-        >>> data = sgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0741)
+        tensor(0.0740)
 
         >>> x_next = sgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1026)
+        tensor(0.0719)
 
-        >>> data = sgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0516)
+        tensor(0.0515)
 
         >>> pcov_16n = sgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = sgp.post_var(x,n=16*n)
@@ -141,7 +139,7 @@ class StandardGP(AbstractGP):
             seed_for_seq:int = None,
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1., 
-            noise:float = 1e-6,
+            noise:float = 1e-4,
             factor_task_kernel:Union[torch.Tensor,int] = 1.,
             rank_factor_task_kernel:int = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
@@ -164,7 +162,8 @@ class StandardGP(AbstractGP):
             shape_noise_task_kernel:torch.Size = None,
             derivatives:list = None,
             derivatives_coeffs:list = None,
-            kernel_class:str = "Gaussian"
+            kernel_class:str = "Gaussian",
+            adaptive_nugget:bool = True,
             ):
         """
         Args:
@@ -205,6 +204,7 @@ class StandardGP(AbstractGP):
                 derivatives = [torch.zeros(d,dtype=int)]+[ej for ej in torch.eye(d,dtype=int)]
                 ```
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
+            adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
         if num_tasks is None: 
             solo_task = True
@@ -225,6 +225,7 @@ class StandardGP(AbstractGP):
         kernel_class = kernel_class.lower()
         assert kernel_class in ["gaussian"]
         self.kernel_class = kernel_class
+        self.adaptive_nugget = adaptive_nugget
         super().__init__(
             seqs,
             num_tasks,

@@ -155,11 +155,12 @@ class AbstractGP(torch.nn.Module):
         optimizer:torch.optim.Optimizer = None,
         stop_crit_improvement_threshold:float = 1e-1,
         stop_crit_wait_iterations:int = 10,
-        store_mll_hist:bool = True, 
-        store_scale_hist:bool = True, 
-        store_lengthscales_hist:bool = True,
-        store_noise_hist:bool = True,
-        store_task_kernel_hist:bool = True,
+        store_hists:bool = False,
+        store_mll_hist:bool = False, 
+        store_scale_hist:bool = False, 
+        store_lengthscales_hist:bool = False,
+        store_noise_hist:bool = False,
+        store_task_kernel_hist:bool = False,
         verbose:int = 5,
         verbose_indent:int = 4,
         ):
@@ -170,6 +171,7 @@ class AbstractGP(torch.nn.Module):
             optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
             stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by `stop_crit_improvement_threshold` for `stop_crit_wait_iterations` iterations 
             stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for `stop_crit_improvement_threshold`
+            store_hists (bool): if True then store all hists, otherwise specify individually with the following arguments 
             store_mll_hist (bool): if `True`, store and return iteration data for mll
             store_scale_hist (bool): if `True`, store and return iteration data for the kernel scale parameter
             store_lengthscales_hist (bool): if `True`, store and return iteration data for the kernel lengthscale parameters
@@ -189,6 +191,7 @@ class AbstractGP(torch.nn.Module):
         if optimizer is None:
             optimizer = self.get_default_optimizer(lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
+        assert isinstance(store_hists,bool), "require bool store_mll_hist" 
         assert isinstance(store_mll_hist,bool), "require bool store_mll_hist" 
         assert isinstance(store_scale_hist,bool), "require bool store_scale_hist" 
         assert isinstance(store_lengthscales_hist,bool), "require bool store_lengthscales_hist" 
@@ -199,12 +202,12 @@ class AbstractGP(torch.nn.Module):
         assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
         logtol = np.log(1+stop_crit_improvement_threshold)
-        if store_mll_hist:
-            mll_hist = torch.empty(iterations+1)
-        store_scale_hist = store_scale_hist and self.raw_scale.requires_grad
-        store_lengthscales_hist = store_lengthscales_hist and self.raw_lengthscales.requires_grad
-        store_noise_hist = store_noise_hist and self.raw_noise.requires_grad
-        store_task_kernel_hist = store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad)
+        store_mll_hist = store_hists or store_mll_hist
+        store_scale_hist = store_hists or (store_scale_hist and self.raw_scale.requires_grad)
+        store_lengthscales_hist = store_hists or (store_lengthscales_hist and self.raw_lengthscales.requires_grad)
+        store_noise_hist = store_hists or (store_noise_hist and self.raw_noise.requires_grad)
+        store_task_kernel_hist = store_hists or (store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad))
+        if store_mll_hist: mll_hist = torch.empty(iterations+1)
         if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
         if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
@@ -243,12 +246,12 @@ class AbstractGP(torch.nn.Module):
             optimizer.step()
             optimizer.zero_grad()
         del os.environ["FASTGP_FORCE_RECOMPILE"]
-        data = {}
-        if store_mll_hist: data["mll_hist"] = mll_hist
-        if store_scale_hist: data["scale_hist"] = scale_hist
-        if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist
-        if store_noise_hist: data["noise_hist"] = noise_hist
-        if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist
+        data = {"iterations":i}
+        if store_mll_hist: data["mll_hist"] = mll_hist[:(i+1)]
+        if store_scale_hist: data["scale_hist"] = scale_hist[:(i+1)]
+        if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist[:(i+1)]
+        if store_noise_hist: data["noise_hist"] = noise_hist[:(i+1)]
+        if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist[:(i+1)]
         return data
     def _sample(self, seq, n_min, n_max):
         x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(self.device)

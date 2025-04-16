@@ -203,11 +203,29 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         if not hasattr(self,"l_chol") or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.gram_matrix_tasks
             kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
-            kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
-            for l in range(self.fgp.num_tasks):
-                kmat_full[l][l] = kmat_full[l][l]+self.fgp.noise[...,None]*torch.eye(self.n[l],device=self.fgp.device)
-            kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
-            self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+            if self.fgp.adaptive_nugget:
+                assert self.fgp.noise.size(-1)==1
+                n0range = torch.arange(self.n[0],device=self.fgp.device)
+                tr00 = kmat_lower_tri[0][0][...,n0range,n0range].sum(-1)
+            spd_factor = 1.
+            while True:
+                for l in range(self.fgp.num_tasks):
+                    if self.fgp.adaptive_nugget:
+                        nlrange = torch.arange(self.n[l],device=self.fgp.device)
+                        trll = kmat_lower_tri[l][l][...,nlrange,nlrange].sum(-1)
+                        noise_l = self.fgp.noise[...,0]*trll/tr00
+                    else:
+                        noise_l = self.fgp.noise[...,0]
+                    kmat_lower_tri[l][l] = kmat_lower_tri[l][l]+spd_factor*noise_l[...,None,None]*torch.eye(self.n[l],device=self.fgp.device)
+                kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+                kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
+                try:
+                    self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+                    break
+                except torch._C._LinAlgError as e:
+                    expected_str = "linalg.cholesky: The factorization could not be completed because the input is not positive-definite"
+                    if str(e)[:len(expected_str)]!=expected_str: raise
+                    spd_factor *= 2#raise Exception("Cholesky factor not SPD, try increasing noise")
             nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
             self.logdet = 2*torch.log(self.l_chol[...,nfrange,nfrange]).sum(-1)
             self._freeze()

@@ -55,7 +55,7 @@ class FastGPLattice(AbstractFastGP):
                     2.50e+01 | 2.80e+03   | 1.01e+03   | -9.11e+01 
                     2.60e+01 | 2.80e+03   | 1.01e+03   | -9.66e+01 
         >>> list(data.keys())
-        ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        ['iterations']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0361)
@@ -105,8 +105,7 @@ class FastGPLattice(AbstractFastGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_future)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0274)
 
@@ -116,8 +115,7 @@ class FastGPLattice(AbstractFastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0277)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0276)
 
