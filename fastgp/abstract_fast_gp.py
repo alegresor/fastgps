@@ -199,7 +199,7 @@ class AbstractFastGP(AbstractGP):
         terms = scale*(ind+lengthscales*parts).prod(-1)
         vals = ((terms*c1).sum(-1)*c0).sum(-1)
         return vals
-    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1: torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
+    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1:torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
         assert c0.ndim==1 and c1.ndim==1
         assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
         assert x.size(-1)==self.d and z.size(-1)==self.d
