@@ -55,7 +55,10 @@ class AbstractGP(torch.nn.Module):
         self.n = torch.zeros(self.num_tasks,dtype=int,device=self.device)
         self.m = -1*torch.ones(self.num_tasks,dtype=int,device=self.device)
         # derivatives
-        if derivatives is not None or derivatives_coeffs is not None: rank_factor_task_kernel = 0 
+        if derivatives is not None or derivatives_coeffs is not None:
+            rank_factor_task_kernel = 1
+            tfs_noise_task_kernel = (lambda x: x, lambda x: x)
+            noise_task_kernel = 0.
         if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64) for i in range(self.num_tasks)]
         if isinstance(derivatives,torch.Tensor): derivatives = [derivatives]
         assert isinstance(derivatives,list) and len(derivatives)==self.num_tasks
@@ -128,7 +131,7 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(shape_noise_task_kernel,torch.Size) and (shape_noise_task_kernel[-1]==self.num_tasks or shape_noise_task_kernel[-1]==1)
         if len(shape_noise_task_kernel)>1: assert shape_noise_task_kernel[:-1]==shape_batch[-(len(shape_noise_task_kernel)-1):]
         if np.isscalar(noise_task_kernel): noise_task_kernel = noise_task_kernel*torch.ones(shape_noise_task_kernel,device=self.device)
-        assert (noise_task_kernel>0).all(), "noise_task_kernel must be positive"
+        assert (noise_task_kernel>=0).all(), "noise_task_kernel must be positive"
         assert len(tfs_noise_task_kernel)==2 and callable(tfs_noise_task_kernel[0]) and callable(tfs_noise_task_kernel[1]), "tfs_noise_task_kernel should be a tuple of two callables, the transform and inverse transform"
         self.tf_noise_task_kernel = tfs_noise_task_kernel[1]
         if requires_grad_noise_task_kernel is None: requires_grad_noise_task_kernel = self.num_tasks>1
@@ -143,7 +146,7 @@ class AbstractGP(torch.nn.Module):
         if any((self.derivatives[i]>0).any() or (self.derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
             self.raw_noise_task_kernel.requires_grad_(False)
             self.raw_factor_task_kernel.requires_grad_(False)
-            assert (self.gram_matrix_tasks==torch.eye(self.num_tasks,device=self.device)).all()
+            assert (self.gram_matrix_tasks==1).all()
         # MLL setup
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def fit(self,
@@ -602,5 +605,3 @@ class AbstractGP(torch.nn.Module):
         if c1 is None: c1 = torch.ones(len(beta1))
         assert isinstance(c1,torch.Tensor) and c1.shape==(beta1.size(0),)
         return self._kernel(x,z,beta0,beta1,c0,c1)
-        
-    

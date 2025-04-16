@@ -257,10 +257,10 @@ class StandardGP(AbstractGP):
             derivatives_coeffs,
         )
     def get_default_optimizer(self, lr):
+        # if lr is None: lr = 1e-1
+        # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
         if lr is None: lr = 1e-1
-        return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
-        #if lr is None: lr = 1e-2
-        #return torch.optim.Rprop(self.parameters(),lr=lr)
+        return torch.optim.Rprop(self.parameters(),lr=lr)
     def get_inv_log_det_cache(self, n=None):
         if n is None: n = self.n
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
