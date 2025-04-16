@@ -227,6 +227,7 @@ class AbstractGP(torch.nn.Module):
             mll = norm_term+logdet_term+mll_const
             if mll.item()<stop_crit_best_mll:
                 stop_crit_best_mll = mll.item()
+                best_params = {param[0]:param[1].data.clone() for param in self.named_parameters()}
             if (stop_crit_save_mll-mll.item())>logtol:
                 stop_crit_iterations_without_improvement_mll = 0
                 stop_crit_save_mll = stop_crit_best_mll
@@ -245,6 +246,8 @@ class AbstractGP(torch.nn.Module):
             mll.backward()
             optimizer.step()
             optimizer.zero_grad()
+        for pname,pdata in best_params.items():
+            setattr(self,pname,torch.nn.Parameter(pdata,requires_grad=getattr(self,pname).requires_grad))
         del os.environ["FASTGP_FORCE_RECOMPILE"]
         data = {"iterations":i}
         if store_mll_hist: data["mll_hist"] = mll_hist[:(i+1)]
