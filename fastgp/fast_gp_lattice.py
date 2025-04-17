@@ -45,7 +45,7 @@ class FastGPLattice(AbstractFastGP):
         tensor(7.0015e-09)
 
         >>> data = fgp.fit()
-             iter of 5.0e+03 | NMLL       | norm term  | logdet term
+             iter of 5.0e+03 | loss       | norm term  | logdet term
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 1.85e+05   | 3.74e+05   | -6.04e+03 
                     5.00e+00 | 2.06e+04   | 4.32e+04   | -3.88e+03 

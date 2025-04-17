@@ -45,7 +45,7 @@ class StandardGP(AbstractGP):
         tensor(0.0559)
 
         >>> data = sgp.fit()
-             iter of 5.0e+03 | NMLL       | norm term  | logdet term
+             iter of 5.0e+03 | loss       | norm term  | logdet term
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 9.37e+05   | 1.87e+06   | -5.11e+02 
                     5.00e+00 | 6.27e+05   | 1.25e+06   | -4.71e+02 

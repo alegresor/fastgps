@@ -40,7 +40,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit()
-             iter of 5.0e+03 | NMLL       | norm term  | logdet term
+             iter of 5.0e+03 | loss       | norm term  | logdet term
             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     0.00e+00 | 1.68e+03   | 1.46e+03   | 1.32e+01  
                     5.00e+00 | 1.62e+03   | 1.05e+03   | 3.11e+02  

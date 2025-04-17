@@ -147,7 +147,6 @@ class AbstractGP(torch.nn.Module):
             self.raw_noise_task_kernel.requires_grad_(False)
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
-        # mll setup
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def fit(self,
         loss_metric:str = "MLL",
@@ -157,7 +156,7 @@ class AbstractGP(torch.nn.Module):
         stop_crit_improvement_threshold:float = 1e0,
         stop_crit_wait_iterations:int = 10,
         store_hists:bool = False,
-        store_mll_hist:bool = False, 
+        store_loss_hist:bool = False, 
         store_scale_hist:bool = False, 
         store_lengthscales_hist:bool = False,
         store_noise_hist:bool = False,
@@ -171,10 +170,10 @@ class AbstractGP(torch.nn.Module):
             iterations (int): number of optimization iterations
             lr (float): learning rate for default optimizer
             optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
-            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best mll is note reduced by `stop_crit_improvement_threshold` for `stop_crit_wait_iterations` iterations 
-            stop_crit_wait_iterations (int): number of iterations to wait for improved mll before early stopping, see the argument description for `stop_crit_improvement_threshold`
+            stop_crit_improvement_threshold (float): stop fitting when the maximum number of iterations is reached or the best loss is note reduced by `stop_crit_improvement_threshold` for `stop_crit_wait_iterations` iterations 
+            stop_crit_wait_iterations (int): number of iterations to wait for improved loss before early stopping, see the argument description for `stop_crit_improvement_threshold`
             store_hists (bool): if True then store all hists, otherwise specify individually with the following arguments 
-            store_mll_hist (bool): if `True`, store and return iteration data for mll
+            store_loss_hist (bool): if `True`, store and return iteration data for loss
             store_scale_hist (bool): if `True`, store and return iteration data for the kernel scale parameter
             store_lengthscales_hist (bool): if `True`, store and return iteration data for the kernel lengthscale parameters
             store_noise_hist (bool): if `True`, store and return iteration data for noise
@@ -185,7 +184,7 @@ class AbstractGP(torch.nn.Module):
         Returns:
             data (dict): iteration data which, dependeing on storage arguments, may include keys in 
                 ```python
-                ["mll_hist","scale_hist","lengthscales_hist","noise_hist","task_kernel_hist"]
+                ["loss_hist","scale_hist","lengthscales_hist","noise_hist","task_kernel_hist"]
                 ```
         """
         assert isinstance(loss_metric,str) and loss_metric.upper() in ["GCV","MLL"] 
@@ -195,7 +194,7 @@ class AbstractGP(torch.nn.Module):
             optimizer = self.get_default_optimizer(lr)
         assert isinstance(optimizer,torch.optim.Optimizer)
         assert isinstance(store_hists,bool), "require bool store_mll_hist" 
-        assert isinstance(store_mll_hist,bool), "require bool store_mll_hist" 
+        assert isinstance(store_loss_hist,bool), "require bool store_loss_hist" 
         assert isinstance(store_scale_hist,bool), "require bool store_scale_hist" 
         assert isinstance(store_lengthscales_hist,bool), "require bool store_lengthscales_hist" 
         assert isinstance(store_noise_hist,bool), "require bool store_noise_hist"
@@ -206,24 +205,24 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
         loss_metric = loss_metric.upper()
         logtol = np.log(1+stop_crit_improvement_threshold)
-        store_mll_hist = store_hists or store_mll_hist
+        store_loss_hist = store_hists or store_loss_hist
         store_scale_hist = store_hists or (store_scale_hist and self.raw_scale.requires_grad)
         store_lengthscales_hist = store_hists or (store_lengthscales_hist and self.raw_lengthscales.requires_grad)
         store_noise_hist = store_hists or (store_noise_hist and self.raw_noise.requires_grad)
         store_task_kernel_hist = store_hists or (store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad))
-        if store_mll_hist: mll_hist = torch.empty(iterations+1)
+        if store_loss_hist: loss_hist = torch.empty(iterations+1)
         if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
         if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
         if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"NMLL","norm term","logdet term")
+            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"loss","norm term","logdet term")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
-        stop_crit_best_nmll = torch.inf 
-        stop_crit_save_nmll = torch.inf 
-        stop_crit_iterations_without_improvement_nmll = 0
+        stop_crit_best_loss = torch.inf 
+        stop_crit_save_loss = torch.inf 
+        stop_crit_iterations_without_improvement_loss = 0
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
@@ -231,35 +230,37 @@ class AbstractGP(torch.nn.Module):
                 assert False, "not implemented"
             elif loss_metric=="MLL":
                 norm_term,logdet_term = inv_log_det_cache.get_norm_term_logdet_term()
+                loss = 1/2*(norm_term+logdet_term+mll_const)
+                metric_val = -loss
             else:
                 assert False, "loss_metric parsing implementation error"
-            nmll = 1/2*(norm_term+logdet_term+mll_const)
-            if nmll.item()<stop_crit_best_nmll:
-                stop_crit_best_nmll = nmll.item()
+            
+            if loss.item()<stop_crit_best_loss:
+                stop_crit_best_loss = loss.item()
                 best_params = {param[0]:param[1].data.clone() for param in self.named_parameters()}
-            if (stop_crit_save_nmll-nmll.item())>logtol:
-                stop_crit_iterations_without_improvement_nmll = 0
-                stop_crit_save_nmll = stop_crit_best_nmll
+            if (stop_crit_save_loss-loss.item())>logtol:
+                stop_crit_iterations_without_improvement_loss = 0
+                stop_crit_save_loss = stop_crit_best_loss
             else:
-                stop_crit_iterations_without_improvement_nmll += 1
-            break_condition = i==iterations or stop_crit_iterations_without_improvement_nmll==stop_crit_wait_iterations
-            if store_mll_hist: mll_hist[i] = -nmll.item()
+                stop_crit_iterations_without_improvement_loss += 1
+            break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations
+            if store_loss_hist: loss_hist[i] = metric_val.item()
             if store_scale_hist: scale_hist[i] = self.scale.detach().to(scale_hist.device)
             if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,nmll.item(),norm_term.item(),logdet_term.item())
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),norm_term.item(),logdet_term.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
-            nmll.backward()
+            loss.backward()
             optimizer.step()
             optimizer.zero_grad()
         for pname,pdata in best_params.items():
             setattr(self,pname,torch.nn.Parameter(pdata,requires_grad=getattr(self,pname).requires_grad))
         del os.environ["FASTGP_FORCE_RECOMPILE"]
         data = {"iterations":i}
-        if store_mll_hist: data["mll_hist"] = mll_hist[:(i+1)]
+        if store_loss_hist: data["loss_hist"] = loss_hist[:(i+1)]
         if store_scale_hist: data["scale_hist"] = scale_hist[:(i+1)]
         if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist[:(i+1)]
         if store_noise_hist: data["noise_hist"] = noise_hist[:(i+1)]
