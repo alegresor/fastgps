@@ -150,10 +150,11 @@ class AbstractGP(torch.nn.Module):
         # mll setup
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def fit(self,
+        loss_metric:str = "MLL",
         iterations:int = 5000,
         lr:float = None,
         optimizer:torch.optim.Optimizer = None,
-        stop_crit_improvement_threshold:float = 1e-1,
+        stop_crit_improvement_threshold:float = 1e0,
         stop_crit_wait_iterations:int = 10,
         store_hists:bool = False,
         store_mll_hist:bool = False, 
@@ -166,6 +167,7 @@ class AbstractGP(torch.nn.Module):
         ):
         """
         Args:
+            loss_metric (str): either "GCV" (Generalized Cross Validation) or "MLL" (Marginal Log Likelihood)
             iterations (int): number of optimization iterations
             lr (float): learning rate for default optimizer
             optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
@@ -186,6 +188,7 @@ class AbstractGP(torch.nn.Module):
                 ["mll_hist","scale_hist","lengthscales_hist","noise_hist","task_kernel_hist"]
                 ```
         """
+        assert isinstance(loss_metric,str) and loss_metric.upper() in ["GCV","MLL"] 
         assert (self.n>0).any(), "cannot fit without data"
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
@@ -201,6 +204,7 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
         assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
+        loss_metric = loss_metric.upper()
         logtol = np.log(1+stop_crit_improvement_threshold)
         store_mll_hist = store_hists or store_mll_hist
         store_scale_hist = store_hists or (store_scale_hist and self.raw_scale.requires_grad)
@@ -223,13 +227,18 @@ class AbstractGP(torch.nn.Module):
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
-            norm_term,logdet_term = inv_log_det_cache.gram_matrix_solve_y()
+            if loss_metric=="GCV":
+                assert False, "not implemented"
+            elif loss_metric=="MLL":
+                norm_term,logdet_term = inv_log_det_cache.get_norm_term_logdet_term()
+            else:
+                assert False, "loss_metric parsing implementation error"
             nmll = 1/2*(norm_term+logdet_term+mll_const)
             if nmll.item()<stop_crit_best_nmll:
                 stop_crit_best_nmll = nmll.item()
                 best_params = {param[0]:param[1].data.clone() for param in self.named_parameters()}
             if (stop_crit_save_nmll-nmll.item())>logtol:
-                stop_crit_iterations_without_improvement_mll = 0
+                stop_crit_iterations_without_improvement_nmll = 0
                 stop_crit_save_nmll = stop_crit_best_nmll
             else:
                 stop_crit_iterations_without_improvement_nmll += 1

@@ -54,11 +54,12 @@ class StandardGP(AbstractGP):
                     2.00e+01 | 1.76e+02   | 4.36e+01   | 1.90e+02  
                     2.50e+01 | 1.71e+02   | 5.92e+01   | 1.66e+02  
                     3.00e+01 | 1.71e+02   | 6.69e+01   | 1.58e+02  
+                    3.50e+01 | 1.71e+02   | 6.48e+01   | 1.60e+02  
         >>> list(data.keys())
         ['iterations']
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0555)
+        tensor(0.0565)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -81,15 +82,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.0286)
+        tensor(20.0279)
         >>> sgp.post_cubature_var()
-        tensor(0.0043)
+        tensor(0.0044)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.8596)
+        tensor(19.8579)
         >>> pcci_high
-        tensor(20.1975)
+        tensor(20.1979)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -99,7 +100,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1060)
+        tensor(0.1057)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
@@ -107,13 +108,13 @@ class StandardGP(AbstractGP):
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0742)
+        tensor(0.0736)
 
         >>> x_next = sgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0686)
+        tensor(0.0777)
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)

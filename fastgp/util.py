@@ -235,14 +235,20 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
         return v
-    def gram_matrix_solve_y(self):
+    def get_norm_term_logdet_term(self):
         y = torch.cat(self.fgp._y,dim=-1)
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
         norm_term = (y*v).sum()
         logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
         return norm_term,logdet_term
-    
+    def get_gcv_term(self):
+        y = torch.cat(self.fgp._y,dim=-1)
+        l_chol,logdet = self()
+        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        numer = (v**2).sum(-1)
+        pass
+
 class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
     def __init__(self, fgp, n):
         self.fgp = fgp
@@ -325,7 +331,7 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
         return zst,logdet
-    def gram_matrix_solve_y(self):
+    def get_norm_term_logdet_term(self):
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
         ytildescat = torch.cat(ytildes,dim=-1)
         ztildes,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
