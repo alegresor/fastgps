@@ -166,7 +166,7 @@ class AbstractGP(torch.nn.Module):
         ):
         """
         Args:
-            loss_metric (str): either "GCV" (Generalized Cross Validation) or "MLL" (Marginal Log Likelihood)
+            loss_metric (str): either "MLL" (Marginal Log Likelihood) or "GCV" (Generalized Cross Validation) 
             iterations (int): number of optimization iterations
             lr (float): learning rate for default optimizer
             optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
@@ -216,7 +216,7 @@ class AbstractGP(torch.nn.Module):
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
         if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"loss","norm term","logdet term")
+            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"loss","term1","term2")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
@@ -227,14 +227,15 @@ class AbstractGP(torch.nn.Module):
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
             if loss_metric=="GCV":
-                assert False, "not implemented"
+                term1,term2 = inv_log_det_cache.get_gcv_numer_denom()
+                loss = (term1/term2).sum()
+                metric_val = loss
             elif loss_metric=="MLL":
-                norm_term,logdet_term = inv_log_det_cache.get_norm_term_logdet_term()
-                loss = 1/2*(norm_term+logdet_term+mll_const)
+                term1,term2 = inv_log_det_cache.get_norm_term_logdet_term()
+                loss = 1/2*(term1+term2+mll_const)
                 metric_val = -loss
             else:
                 assert False, "loss_metric parsing implementation error"
-            
             if loss.item()<stop_crit_best_loss:
                 stop_crit_best_loss = loss.item()
                 best_params = {param[0]:param[1].data.clone() for param in self.named_parameters()}
@@ -250,7 +251,7 @@ class AbstractGP(torch.nn.Module):
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),norm_term.item(),logdet_term.item())
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),term1.item(),term2.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
             loss.backward()
