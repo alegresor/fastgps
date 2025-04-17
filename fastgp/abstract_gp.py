@@ -147,7 +147,7 @@ class AbstractGP(torch.nn.Module):
             self.raw_noise_task_kernel.requires_grad_(False)
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
-        # MLL setup
+        # mll setup
         self.d_out = int(torch.tensor(self.shape_batch).prod())
     def fit(self,
         iterations:int = 5000,
@@ -217,33 +217,33 @@ class AbstractGP(torch.nn.Module):
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
-        stop_crit_best_mll = torch.inf 
-        stop_crit_save_mll = torch.inf 
-        stop_crit_iterations_without_improvement_mll = 0
+        stop_crit_best_nmll = torch.inf 
+        stop_crit_save_nmll = torch.inf 
+        stop_crit_iterations_without_improvement_nmll = 0
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
             norm_term,logdet_term = inv_log_det_cache.gram_matrix_solve_y()
-            mll = norm_term+logdet_term+mll_const
-            if mll.item()<stop_crit_best_mll:
-                stop_crit_best_mll = mll.item()
+            nmll = 1/2*(norm_term+logdet_term+mll_const)
+            if nmll.item()<stop_crit_best_nmll:
+                stop_crit_best_nmll = nmll.item()
                 best_params = {param[0]:param[1].data.clone() for param in self.named_parameters()}
-            if (stop_crit_save_mll-mll.item())>logtol:
+            if (stop_crit_save_nmll-nmll.item())>logtol:
                 stop_crit_iterations_without_improvement_mll = 0
-                stop_crit_save_mll = stop_crit_best_mll
+                stop_crit_save_nmll = stop_crit_best_nmll
             else:
-                stop_crit_iterations_without_improvement_mll += 1
-            break_condition = i==iterations or stop_crit_iterations_without_improvement_mll==stop_crit_wait_iterations
-            if store_mll_hist: mll_hist[i] = mll.item()
+                stop_crit_iterations_without_improvement_nmll += 1
+            break_condition = i==iterations or stop_crit_iterations_without_improvement_nmll==stop_crit_wait_iterations
+            if store_mll_hist: mll_hist[i] = -nmll.item()
             if store_scale_hist: scale_hist[i] = self.scale.detach().to(scale_hist.device)
             if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,mll.item(),norm_term.item(),logdet_term.item())
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,nmll.item(),norm_term.item(),logdet_term.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
-            mll.backward()
+            nmll.backward()
             optimizer.step()
             optimizer.zero_grad()
         for pname,pdata in best_params.items():
