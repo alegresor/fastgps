@@ -203,11 +203,29 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         if not hasattr(self,"l_chol") or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.gram_matrix_tasks
             kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
-            kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
-            for l in range(self.fgp.num_tasks):
-                kmat_full[l][l] = kmat_full[l][l]+self.fgp.noise[...,None]*torch.eye(self.n[l],device=self.fgp.device)
-            kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
-            self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+            if self.fgp.adaptive_nugget:
+                assert self.fgp.noise.size(-1)==1
+                n0range = torch.arange(self.n[0],device=self.fgp.device)
+                tr00 = kmat_lower_tri[0][0][...,n0range,n0range].sum(-1)
+            spd_factor = 1.
+            while True:
+                for l in range(self.fgp.num_tasks):
+                    if self.fgp.adaptive_nugget:
+                        nlrange = torch.arange(self.n[l],device=self.fgp.device)
+                        trll = kmat_lower_tri[l][l][...,nlrange,nlrange].sum(-1)
+                        noise_l = self.fgp.noise[...,0]*trll/tr00
+                    else:
+                        noise_l = self.fgp.noise[...,0]
+                    kmat_lower_tri[l][l] = kmat_lower_tri[l][l]+spd_factor*noise_l[...,None,None]*torch.eye(self.n[l],device=self.fgp.device)
+                kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+                kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
+                try:
+                    self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+                    break
+                except torch._C._LinAlgError as e:
+                    expected_str = "linalg.cholesky: The factorization could not be completed because the input is not positive-definite"
+                    if str(e)[:len(expected_str)]!=expected_str: raise
+                    spd_factor *= 2#raise Exception("Cholesky factor not SPD, try increasing noise")
             nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
             self.logdet = 2*torch.log(self.l_chol[...,nfrange,nfrange]).sum(-1)
             self._freeze()
@@ -217,14 +235,23 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
         return v
-    def gram_matrix_solve_y(self):
+    def get_norm_term_logdet_term(self):
         y = torch.cat(self.fgp._y,dim=-1)
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
         norm_term = (y*v).sum()
         logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
         return norm_term,logdet_term
-    
+    def get_gcv_numer_denom(self):
+        y = torch.cat(self.fgp._y,dim=-1)
+        l_chol,logdet = self()
+        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        numer = (v**2).sum(-1)
+        l_chol_inv = torch.linalg.solve_triangular(l_chol,torch.eye(l_chol.size(-1),device=self.fgp.device),upper=False)
+        tr_k_inv = (l_chol_inv**2).sum(-1).sum(-1)
+        denom = (tr_k_inv/l_chol.size(-1))**2
+        return numer,denom
+
 class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
     def __init__(self, fgp, n):
         self.fgp = fgp
@@ -285,7 +312,7 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         assert y.size(-1)==self.n.sum() 
         ys = y.split(self.n.tolist(),dim=-1)
         yst = [self.fgp.ft(ys[i]) for i in range(self.fgp.num_tasks)]
-        yst,_ = self._gram_matrix_solve_tilde_to_tilde(yst)
+        yst,_,_ = self._gram_matrix_solve_tilde_to_tilde(yst)
         ys = [self.fgp.ift(yst[i]).real for i in range(self.fgp.num_tasks)]
         y = torch.cat(ys,dim=-1)
         if os.environ.get("FASTGP_DEBUG")=="True":
@@ -306,15 +333,27 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         z = z.reshape(list(z.shape[:-2])+[-1])
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
-        return zst,logdet
-    def gram_matrix_solve_y(self):
+        return zst,inv,logdet
+    def get_norm_term_logdet_term(self):
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
         ytildescat = torch.cat(ytildes,dim=-1)
-        ztildes,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
         ztildescat = torch.cat(ztildes,dim=-1)
         norm_term = (ytildescat.conj()*ztildescat).real.sum()
         logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
         return norm_term,logdet_term
+    def get_gcv_numer_denom(self):
+        ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
+        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+        ztildescat = torch.cat(ztildes,dim=-1)
+        numer = (ztildescat.conj()*ztildescat).real.sum(-1)
+        n = inv.size(-2)
+        nrange = torch.arange(n,device=self.fgp.device)
+        tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1)
+        denom = ((tr_k_inv/self.n.sum())**2).real
+        return numer,denom
+
+
 
 class _CoeffsCache(object):
     def __init__(self, fgp):

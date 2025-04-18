@@ -45,17 +45,17 @@ class FastGPLattice(AbstractFastGP):
         tensor(7.0015e-09)
 
         >>> data = fgp.fit()
-             iter of 5.0e+03 | NMLL       | norm term  | logdet term
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 3.70e+05   | 3.74e+05   | -6.04e+03 
-                    5.00e+00 | 4.12e+04   | 4.32e+04   | -3.88e+03 
-                    1.00e+01 | 2.81e+03   | 9.05e+02   | 1.89e+01  
-                    1.50e+01 | 2.82e+03   | 8.51e+02   | 8.20e+01  
-                    2.00e+01 | 2.80e+03   | 1.00e+03   | -8.47e+01 
-                    2.50e+01 | 2.80e+03   | 1.01e+03   | -9.11e+01 
-                    2.60e+01 | 2.80e+03   | 1.01e+03   | -9.66e+01 
+             iter of 5.0e+03 | loss       | term1      | term2     
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 1.85e+05   | 3.74e+05   | -6.04e+03 
+                    5.00e+00 | 2.06e+04   | 4.32e+04   | -3.88e+03 
+                    1.00e+01 | 1.40e+03   | 9.05e+02   | 1.89e+01  
+                    1.50e+01 | 1.41e+03   | 8.51e+02   | 8.20e+01  
+                    2.00e+01 | 1.40e+03   | 1.00e+03   | -8.47e+01 
+                    2.50e+01 | 1.40e+03   | 1.01e+03   | -9.11e+01 
+                    2.60e+01 | 1.40e+03   | 1.01e+03   | -9.66e+01 
         >>> list(data.keys())
-        ['mll_hist', 'scale_hist', 'lengthscales_hist']
+        ['iterations']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0361)
@@ -83,11 +83,11 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(3.1823e-06)
+        tensor(3.1129e-06)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1796)
+        tensor(20.1797)
         >>> pcci_high
         tensor(20.1888)
 
@@ -99,14 +99,13 @@ class FastGPLattice(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0305)
+        tensor(0.0304)
 
         >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_future)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0274)
 
@@ -116,10 +115,9 @@ class FastGPLattice(AbstractFastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0277)
 
-        >>> data = fgp.fit(verbose=False,store_mll_hist=False,store_scale_hist=False,store_lengthscales_hist=False,store_noise_hist=False)
-        >>> assert len(data)==0
+        >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0276)
+        tensor(0.0277)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)

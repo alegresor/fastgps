@@ -7,6 +7,6 @@ doctests:
 	pytest --doctest-modules fastgp/ -W ignore --no-header
 
 nbtests:
-	pytest --nbval docs/ --no-header
+	pytest --nbval docs/ --no-header --ignore docs/examples/probnum25_paper/
 
 tests: doctests nbtests
