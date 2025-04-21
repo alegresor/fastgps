@@ -18,6 +18,9 @@ nav:
     - Fast GP Net: examples/derivative_informed/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/derivative_informed/fgp_lattice.ipynb
     - Compare GPs: examples/derivative_informed/compare_gps_plot.ipynb
+  - Publications:
+    - ProbNum25: examples/probnum25_paper/probnum25_paper.ipynb
+
   
 plugins:
   - mkdocs-jupyter:

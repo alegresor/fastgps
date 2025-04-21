@@ -40,6 +40,7 @@ class AbstractGP(torch.nn.Module):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
+            adaptive_nugget,
         ):
         super().__init__()
         assert torch.get_default_dtype()==torch.float64, "fast transforms do not work without torch.float64 precision" 
@@ -148,6 +149,7 @@ class AbstractGP(torch.nn.Module):
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
         self.d_out = int(torch.tensor(self.shape_batch).prod())
+        self.adaptive_nugget = adaptive_nugget
     def fit(self,
         loss_metric:str = "MLL",
         iterations:int = 5000,

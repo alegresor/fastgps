@@ -224,7 +224,6 @@ class StandardGP(AbstractGP):
         kernel_class = kernel_class.lower()
         assert kernel_class in ["gaussian"]
         self.kernel_class = kernel_class
-        self.adaptive_nugget = adaptive_nugget
         super().__init__(
             seqs,
             num_tasks,
@@ -255,6 +254,7 @@ class StandardGP(AbstractGP):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
+            adaptive_nugget,
         )
     def get_default_optimizer(self, lr):
         # if lr is None: lr = 1e-1

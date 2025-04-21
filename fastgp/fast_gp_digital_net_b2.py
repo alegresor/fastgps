@@ -160,6 +160,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives_coeffs:list = None,
             compile_fts:bool = False,
             compile_fts_kwargs: dict = {},
+            adaptive_nugget:bool = False,
             ):
         """
         Args:
@@ -205,6 +206,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs)`, otherwise use the uncompiled version
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
+            adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
         if num_tasks is None: 
@@ -266,6 +268,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
+            adaptive_nugget,
         )
         assert (self.alpha<=4).all() and (self.alpha>=2).all()
     def get_omega(self, m):

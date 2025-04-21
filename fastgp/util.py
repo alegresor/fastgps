@@ -88,8 +88,6 @@ class _LamCaches(object):
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
             k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.l0,self.l1,n=2**m),self.beta0,self.beta1,self.c0,self.c1)
-            if self.l0==self.l1:
-                k1[...,[0]] += self.fgp.noise
             self.lam_list = [self.fgp.ft(k1)]
             self._freeze(0)
             self.m_min = self.m_max = m
@@ -97,7 +95,6 @@ class _LamCaches(object):
         if m==self.m_min:
             if not self._frozen_equal(0) or self._force_recompile():
                 k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min],self.beta0,self.beta1,self.c0,self.c1)
-                k1[...,[0]] += self.fgp.noise
                 self.lam_list[0] = self.fgp.ft(k1)
                 self._freeze(0)
             return self.lam_list[0]
@@ -268,7 +265,20 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
                 for l1 in range(l0,self.fgp.num_tasks):
                     to1 = self.task_order[l1]
                     lam = self.fgp.get_lam(to0,to1,n[l0]) if to0<=to1 else self.fgp.get_lam(to1,to0,n[l0]).conj()
-                    lams[l0,l1] = torch.sqrt(n[l1])*kmat_tasks[...,to0,to1,None]*lam
+                    lams[l0,l1] = torch.sqrt(n[l1])*lam
+            if self.fgp.adaptive_nugget:
+                tr00 = lams[self.inv_task_order[0],self.inv_task_order[0]].sum(-1)
+                for l in range(self.fgp.num_tasks):
+                    trll = lams[l,l].sum(-1)
+                    lams[l,l] = lams[l,l]+self.fgp.noise*(trll/tr00).abs()
+            else:
+                for l in range(self.fgp.num_tasks):
+                    lams[l,l] = lams[l,l]+self.fgp.noise
+            for l0 in range(self.fgp.num_tasks):
+                to0 = self.task_order[l0]
+                for l1 in range(l0,self.fgp.num_tasks):
+                    to1 = self.task_order[l1]
+                    lams[l0,l1] = lams[l0,l1]*kmat_tasks[...,to0,to1,None]
             self.logdet = torch.log(torch.abs(lams[0,0])).sum(-1)
             A = (1/lams[0,0])[...,None,None,:]
             for l in range(1,self.fgp.num_tasks):

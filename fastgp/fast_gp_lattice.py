@@ -163,6 +163,7 @@ class FastGPLattice(AbstractFastGP):
             derivatives_coeffs:list = None,
             compile_fts:bool = False,
             compile_fts_kwargs:dict = {},
+            adaptive_nugget:bool = False,
             ):
         """
         Args:
@@ -207,6 +208,7 @@ class FastGPLattice(AbstractFastGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             compile_fts (bool): if `True`, use `torch.compile(qmcpy.fftbr_torch,**compile_fts)` and `torch.compile(qmcpy.ifftbr_torch,**compile_fts)`, otherwise use the uncompiled versions
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
+            adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
         assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
         if num_tasks is None: 
@@ -263,6 +265,7 @@ class FastGPLattice(AbstractFastGP):
             shape_noise_task_kernel,
             derivatives,
             derivatives_coeffs,
+            adaptive_nugget,
         )
     def get_omega(self, m):
         return torch.exp(-torch.pi*1j*torch.arange(2**m,device=self.device)/2**m)
