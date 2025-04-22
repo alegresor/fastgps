@@ -155,7 +155,7 @@ class AbstractGP(torch.nn.Module):
         iterations:int = 5000,
         lr:float = None,
         optimizer:torch.optim.Optimizer = None,
-        stop_crit_improvement_threshold:float = 1e0,
+        stop_crit_improvement_threshold:float = 5e-2,
         stop_crit_wait_iterations:int = 10,
         store_hists:bool = False,
         store_loss_hist:bool = False, 
