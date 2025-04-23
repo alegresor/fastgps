@@ -18,20 +18,20 @@ jobs:
       - name: Install Base Dependencies 
         shell: bash -l {0}
         run: |
-          pip install numpy>=2.2.3
-          pip install scipy>=1.15.2
-          pip install torch>=2.6.0
-          pip install qmcpy>=1.6.2.1
-          pip install pandas>=2.2.3
-          pip install matplotlib>=3.10.0
-          pip install tueplots>=0.2.0
+          pip install numpy==2.2.3
+          pip install scipy==1.15.2
+          pip install torch==2.6.0
+          pip install qmcpy==1.6.2.1
+          pip install pandas==2.2.3
+          pip install matplotlib==3.10.0
+          pip install tueplots==0.2.0
           pip install pytest
           pip install nbval
       - name: Install fastgp 
         shell: bash -l {0}
         run: |
           pip install -e .
-      - name: Doctests
+      - name: Test
         shell: bash -l {0}
         run: | 
           make tests 
