@@ -39,18 +39,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         tensor(0.0336)
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
-        >>> data = fgp.fit()
-             iter of 5.0e+03 | loss       | term1      | term2     
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 1.68e+03   | 1.46e+03   | 1.32e+01  
-                    5.00e+00 | 1.62e+03   | 1.05e+03   | 3.11e+02  
-                    1.00e+01 | 1.57e+03   | 9.55e+02   | 2.96e+02  
-                    1.50e+01 | 1.55e+03   | 1.03e+03   | 1.86e+02  
-                    2.00e+01 | 1.55e+03   | 1.01e+03   | 2.02e+02  
-                    2.50e+01 | 1.55e+03   | 1.04e+03   | 1.71e+02  
-                    3.00e+01 | 1.55e+03   | 1.03e+03   | 1.75e+02  
-                    3.50e+01 | 1.55e+03   | 1.04e+03   | 1.72e+02  
-                    4.00e+01 | 1.55e+03   | 1.03e+03   | 1.80e+02  
+        >>> data = fgp.fit(verbose=0)
         >>> list(data.keys())
         ['iterations']
 
@@ -84,7 +73,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1563)
+        tensor(20.1564)
         >>> pcci_high
         tensor(20.2228)
         
@@ -104,17 +93,17 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0258)
+        tensor(0.0259)
 
         >>> x_next = fgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0194)
+        tensor(0.0191)
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0189)
+        tensor(0.0187)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)

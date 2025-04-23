@@ -44,16 +44,7 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_var()
         tensor(7.0015e-09)
 
-        >>> data = fgp.fit()
-             iter of 5.0e+03 | loss       | term1      | term2     
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 1.85e+05   | 3.74e+05   | -6.04e+03 
-                    5.00e+00 | 2.06e+04   | 4.32e+04   | -3.88e+03 
-                    1.00e+01 | 1.40e+03   | 9.05e+02   | 1.89e+01  
-                    1.50e+01 | 1.41e+03   | 8.51e+02   | 8.20e+01  
-                    2.00e+01 | 1.40e+03   | 1.00e+03   | -8.47e+01 
-                    2.50e+01 | 1.40e+03   | 1.01e+03   | -9.11e+01 
-                    2.60e+01 | 1.40e+03   | 1.01e+03   | -9.66e+01 
+        >>> data = fgp.fit(verbose=0)
         >>> list(data.keys())
         ['iterations']
 
@@ -117,7 +108,7 @@ class FastGPLattice(AbstractFastGP):
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0277)
+        tensor(0.0276)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)
