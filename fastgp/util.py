@@ -236,16 +236,15 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         y = torch.cat(self.fgp._y,dim=-1)
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
-        norm_term = (y*v).sum()
-        logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-        return norm_term,logdet_term
+        norm_term = (y*v).sum(-1,keepdim=True)
+        return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
         y = torch.cat(self.fgp._y,dim=-1)
         l_chol,logdet = self()
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
-        numer = (v**2).sum(-1)
+        numer = (v**2).sum(-1,keepdim=True)
         l_chol_inv = torch.linalg.solve_triangular(l_chol,torch.eye(l_chol.size(-1),device=self.fgp.device),upper=False)
-        tr_k_inv = (l_chol_inv**2).sum(-1).sum(-1)
+        tr_k_inv = (l_chol_inv**2).sum(-1).sum(-1,keepdim=True)
         denom = (tr_k_inv/l_chol.size(-1))**2
         return numer,denom
 
@@ -349,21 +348,18 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         ytildescat = torch.cat(ytildes,dim=-1)
         ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
         ztildescat = torch.cat(ztildes,dim=-1)
-        norm_term = (ytildescat.conj()*ztildescat).real.sum()
-        logdet_term = self.fgp.d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-        return norm_term,logdet_term
+        norm_term = (ytildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
+        return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
         ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
         ztildescat = torch.cat(ztildes,dim=-1)
-        numer = (ztildescat.conj()*ztildescat).real.sum(-1)
+        numer = (ztildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
         n = inv.size(-2)
         nrange = torch.arange(n,device=self.fgp.device)
-        tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1)
+        tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1,keepdim=True)
         denom = ((tr_k_inv/self.n.sum())**2).real
         return numer,denom
-
-
 
 class _CoeffsCache(object):
     def __init__(self, fgp):

@@ -185,7 +185,7 @@ class AbstractFastGP(AbstractGP):
     def _kernel_parts(self, x, z, beta0, beta1):
         assert x.size(-1)==self.d and z.size(-1)==self.d and beta0.ndim==2 and beta0.size(1)==self.d and beta1.ndim==2 and beta1.size(1)==self.d
         delta = self._ominus(x,z)
-        parts = torch.empty(list(delta.shape)[:-1]+[len(beta0),len(beta1)]+[delta.size(-1)])
+        parts = torch.empty(list(delta.shape)[:-1]+[len(beta0),len(beta1)]+[delta.size(-1)],device=self.device)
         for _t0 in range(len(beta0)):
             for _t1 in range(len(beta1)):
                 parts[...,_t0,_t1,:] = self._kernel_parts_from_delta(delta,beta0[_t0],beta1[_t1])

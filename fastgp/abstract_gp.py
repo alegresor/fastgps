@@ -60,13 +60,13 @@ class AbstractGP(torch.nn.Module):
             rank_factor_task_kernel = 1
             tfs_noise_task_kernel = (lambda x: x, lambda x: x)
             noise_task_kernel = 0.
-        if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64) for i in range(self.num_tasks)]
+        if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64,device=self.device) for i in range(self.num_tasks)]
         if isinstance(derivatives,torch.Tensor): derivatives = [derivatives]
         assert isinstance(derivatives,list) and len(derivatives)==self.num_tasks
         derivatives = [deriv[None,:] if deriv.ndim==1 else deriv for deriv in derivatives]
         assert all((derivatives[i].ndim==2 and derivatives[i].size(1)==self.d) for i in range(self.num_tasks))
         self.derivatives = derivatives
-        if derivatives_coeffs is None: derivatives_coeffs = [torch.ones(len(self.derivatives[i])) for i in range(self.num_tasks)]
+        if derivatives_coeffs is None: derivatives_coeffs = [torch.ones(len(self.derivatives[i]),device=self.device) for i in range(self.num_tasks)]
         assert isinstance(derivatives_coeffs,list) and len(derivatives_coeffs)==self.num_tasks
         assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(self.derivatives[i]) for i in range(self.num_tasks))
         self.derivatives_coeffs = derivatives_coeffs
@@ -148,7 +148,6 @@ class AbstractGP(torch.nn.Module):
             self.raw_noise_task_kernel.requires_grad_(False)
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
-        self.d_out = int(torch.tensor(self.shape_batch).prod())
         self.adaptive_nugget = adaptive_nugget
     def fit(self,
         loss_metric:str = "MLL",
@@ -165,6 +164,7 @@ class AbstractGP(torch.nn.Module):
         store_task_kernel_hist:bool = False,
         verbose:int = 5,
         verbose_indent:int = 4,
+        masks:torch.Tensor = None,
         ):
         """
         Args:
@@ -182,6 +182,7 @@ class AbstractGP(torch.nn.Module):
             store_task_kernel_hist (bool): if `True`, store and return iteration data for the task kernel
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
+            masks (torch.Tensor): only optimize outputs corresponding to `y[...,*masks]`
             
         Returns:
             data (dict): iteration data which, dependeing on storage arguments, may include keys in 
@@ -205,6 +206,7 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
         assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
         assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
+        assert masks is None or (isinstance(masks,torch.Tensor))
         loss_metric = loss_metric.upper()
         logtol = np.log(1+stop_crit_improvement_threshold)
         store_loss_hist = store_hists or store_loss_hist
@@ -217,11 +219,19 @@ class AbstractGP(torch.nn.Module):
         if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
         if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
+        if masks is not None:
+            masks = torch.atleast_2d(masks)
+            assert masks.ndim==2
+            assert len(masks)<=len(self.shape_batch)
+            n_masks = len(masks)
+            d_out = torch.empty(self.shape_batch)[...,*masks].numel()
+        else:
+            d_out = int(torch.tensor(self.shape_batch).prod())
         if verbose:
             _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"loss","term1","term2")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
-        mll_const = self.d_out*self.n.sum()*np.log(2*np.pi)
+        mll_const = d_out*self.n.sum()*np.log(2*np.pi)
         stop_crit_best_loss = torch.inf 
         stop_crit_save_loss = torch.inf 
         stop_crit_iterations_without_improvement_loss = 0
@@ -229,11 +239,23 @@ class AbstractGP(torch.nn.Module):
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
             if loss_metric=="GCV":
-                term1,term2 = inv_log_det_cache.get_gcv_numer_denom()
+                numer,denom = inv_log_det_cache.get_gcv_numer_denom()
+                if masks is None:
+                    term1 = numer 
+                    term2 = denom
+                else:
+                    term1 = numer[...,*masks,:]
+                    term2 = denom.expand(list(self.shape_batch)+[1])[...,*masks,:]
                 loss = (term1/term2).sum()
                 metric_val = loss
             elif loss_metric=="MLL":
-                term1,term2 = inv_log_det_cache.get_norm_term_logdet_term()
+                norm_term,logdet = inv_log_det_cache.get_norm_term_logdet_term()
+                if masks is None:
+                    term1 = norm_term.sum()
+                    term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+                else:
+                    term1 = norm_term[...,*masks,0].sum()
+                    term2 = logdet.expand(list(self.shape_batch)+[1])[...,*masks,0].sum()
                 loss = 1/2*(term1+term2+mll_const)
                 metric_val = -loss
             else:
@@ -253,7 +275,7 @@ class AbstractGP(torch.nn.Module):
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),term1.item(),term2.item())
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
                 print(" "*verbose_indent+_s)
             if break_condition: break
             loss.backward()
@@ -339,7 +361,8 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat = torch.cat([torch.cat([kmat_tasks[...,task[l0],l1,None,None]*self._kernel(x[:,None,:],self.get_xb(l1)[None,:,:],self.derivatives[task[l0]],self.derivatives[l1],self.derivatives_coeffs[task[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
+        #pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
+        pmean = torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
