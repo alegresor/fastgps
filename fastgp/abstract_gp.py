@@ -563,6 +563,12 @@ class AbstractGP(torch.nn.Module):
         pcci_high = pcmean+pcerror
         return pcmean,pcvar,q,pcci_low,pcci_high
     @property
+    def total_parameters(self):
+        return sum(p.numel() for p in self.parameters())
+    @property 
+    def total_tuneable_parameters(self):
+        return sum((p.numel() if p.requires_grad else 0) for p in self.parameters())
+    @property
     def scale(self):
         """
         Kernel scale parameter.
