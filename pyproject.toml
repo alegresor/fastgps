@@ -1,10 +1,16 @@
+# https://packaging.python.org/en/latest/guides/writing-pyproject-toml/
+# brew install pdm
+# https://pdm-project.org/latest/usage/publish/
+# pdm publish --repository testpypi
+# pdm publish 
+
 [build-system]
 requires = ["pdm-backend >= 2.4.0"]
 build-backend = "pdm.backend"
 
 [project]
 name = "fastgps"
-dynamic = ["version"]
+version = "0.0.1"
 description = "Fast Gaussian processes regression in O(n log n)"
 requires-python = ">=3.7"
 dependencies = [
@@ -41,5 +47,9 @@ Issues = "https://github.com/alegresor/FastGaussianProcesses/issues"
 dev = [
     "pytest >= 8.0.0",
     "nbval >= 0.10.0",
+    "pytest-accept >= 0.1.10",
     "jupyterlab >= 4.0.0",
+    "matplotlib >= 3.9.0",
+    "tueplots >= 0.2.0",
+    "pandas >= 2.0.0",
 ]

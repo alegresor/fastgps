@@ -1,3 +1,9 @@
-# `FastGP`: Fast Gaussian Process Regression
+# `FastGPs`: Fast Gaussian Process Regression Models in Python
 
-Please refer to our documentation at [alegresor.github.io/FastGaussianProcesses/](https://alegresor.github.io/FastGaussianProcesses/)
+[![](https://img.shields.io/badge/docs-15b01a)](https://alegresor.github.io/fastgps/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/fastgps.svg?label=PyPI%20downloads)](https://pypi.org/project/fastgps/)
+
+```bash
+pip install fastgps
+```
+
