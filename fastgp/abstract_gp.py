@@ -165,10 +165,11 @@ class AbstractGP(torch.nn.Module):
         verbose:int = 5,
         verbose_indent:int = 4,
         masks:torch.Tensor = None,
+        cv_weights:torch.Tensor = 1,
         ):
         """
         Args:
-            loss_metric (str): either "MLL" (Marginal Log Likelihood) or "GCV" (Generalized Cross Validation) 
+            loss_metric (str): either "MLL" (Marginal Log Likelihood) or "CV" (Cross Validation) or "GCV" (Generalized CV)
             iterations (int): number of optimization iterations
             lr (float): learning rate for default optimizer
             optimizer (torch.optim.Optimizer): optimizer defaulted to `torch.optim.Rprop(self.parameters(),lr=lr)`
@@ -183,6 +184,7 @@ class AbstractGP(torch.nn.Module):
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
             masks (torch.Tensor): only optimize outputs corresponding to `y[...,*masks]`
+            cv_weights (Union[str,torch.Tensor]): weights for cross validation where passing `cv_weights="l2_rel"` sets 
             
         Returns:
             data (dict): iteration data which, dependeing on storage arguments, may include keys in 
@@ -190,7 +192,7 @@ class AbstractGP(torch.nn.Module):
                 ["loss_hist","scale_hist","lengthscales_hist","noise_hist","task_kernel_hist"]
                 ```
         """
-        assert isinstance(loss_metric,str) and loss_metric.upper() in ["GCV","MLL"] 
+        assert isinstance(loss_metric,str) and loss_metric.upper() in ["MLL","GCV","CV"] 
         assert (self.n>0).any(), "cannot fit without data"
         assert isinstance(iterations,int) and iterations>=0
         if optimizer is None:
@@ -223,7 +225,6 @@ class AbstractGP(torch.nn.Module):
             masks = torch.atleast_2d(masks)
             assert masks.ndim==2
             assert len(masks)<=len(self.shape_batch)
-            n_masks = len(masks)
             d_out = torch.empty(self.shape_batch)[...,*masks].numel()
         else:
             d_out = int(torch.tensor(self.shape_batch).prod())
@@ -258,6 +259,17 @@ class AbstractGP(torch.nn.Module):
                     term2 = logdet.expand(list(self.shape_batch)+[1])[...,*masks,0].sum()
                 loss = 1/2*(term1+term2+mll_const)
                 metric_val = -loss
+            elif loss_metric=="CV":
+                inv_diag = inv_log_det_cache.get_inv_diag()
+                term1 = term2 = torch.nan*torch.ones(1)
+                del os.environ["FASTGP_FORCE_RECOMPILE"]
+                coeffs = self.coeffs # avoid repeated Gram matrix inverse computations
+                os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+                squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
+                if masks is None:
+                    loss = squared_sums.sum()
+                else:
+                    loss = squared_sums[...,*masks,0].sum()
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -642,14 +654,14 @@ class AbstractGP(torch.nn.Module):
     def kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor=None, beta1:torch.Tensor=None, c0:torch.Tensor=None, c1:torch.Tensor=None):
         assert isinstance(x,torch.Tensor) and x.size(-1)==self.d
         assert isinstance(z,torch.Tensor) and z.size(-1)==self.d
-        if beta0 is None: beta0 = torch.zeros((1,self.d),dtype=int)
+        if beta0 is None: beta0 = torch.zeros((1,self.d),dtype=int,device=self.device)
         if beta0.shape==(len(beta0),): beta0 = beta0[None,:]
         assert isinstance(beta0,torch.Tensor) and beta0.ndim==2 and beta0.size(1)==self.d 
-        if beta1 is None: beta1 = torch.zeros((1,self.d),dtype=int)
+        if beta1 is None: beta1 = torch.zeros((1,self.d),dtype=int,device=self.device)
         if beta1.shape==(len(beta1),): beta1 = beta1[None,:]
         assert isinstance(beta1,torch.Tensor) and beta1.ndim==2 and beta1.size(1)==self.d 
-        if c0 is None: c0 = torch.ones(len(beta0))
+        if c0 is None: c0 = torch.ones(len(beta0),device=self.device)
         assert isinstance(c0,torch.Tensor) and c0.shape==(beta0.size(0),)
-        if c1 is None: c1 = torch.ones(len(beta1))
+        if c1 is None: c1 = torch.ones(len(beta1),device=self.device)
         assert isinstance(c1,torch.Tensor) and c1.shape==(beta1.size(0),)
         return self._kernel(x,z,beta0,beta1,c0,c1)

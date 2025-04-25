@@ -239,15 +239,22 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         norm_term = (y*v).sum(-1,keepdim=True)
         return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
-        y = torch.cat(self.fgp._y,dim=-1)
         l_chol,logdet = self()
+        y = torch.cat(self.fgp._y,dim=-1)
         v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
         numer = (v**2).sum(-1,keepdim=True)
         l_chol_inv = torch.linalg.solve_triangular(l_chol,torch.eye(l_chol.size(-1),device=self.fgp.device),upper=False)
         tr_k_inv = (l_chol_inv**2).sum(-1).sum(-1,keepdim=True)
         denom = (tr_k_inv/l_chol.size(-1))**2
         return numer,denom
-
+    def get_inv_diag(self):
+        # right now this costs costs O(n^3), maybe it can be done faster?
+        l_chol,logdet = self()
+        kmatinv = torch.cholesky_solve(torch.eye(l_chol.size(-1),device=self.fgp.device),l_chol,upper=False)
+        nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
+        inv_diag = kmatinv[...,nrange,nrange]
+        return inv_diag
+    
 class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
     def __init__(self, fgp, n):
         self.fgp = fgp
@@ -360,6 +367,17 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1,keepdim=True)
         denom = ((tr_k_inv/self.n.sum())**2).real
         return numer,denom
+    def get_inv_diag(self):
+        # there should be a more efficient way than this current O(n^2 log n) approach 
+        inv,logdet = self()
+        del os.environ["FASTGP_FORCE_RECOMPILE"]
+        nsum = self.fgp.n.sum()
+        eye = torch.eye(nsum,device=self.fgp.device).reshape([nsum]+[1]*(inv.ndim-3)+[nsum])
+        kmatinv = self.gram_matrix_solve(eye).permute([1+i for i in range(inv.ndim-3)]+[0,-1])
+        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+        nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
+        inv_diag = kmatinv[...,nrange,nrange]
+        return inv_diag
 
 class _CoeffsCache(object):
     def __init__(self, fgp):
