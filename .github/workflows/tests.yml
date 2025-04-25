@@ -27,7 +27,7 @@ jobs:
           pip install tueplots==0.2.0
           pip install pytest
           pip install nbval
-      - name: Install fastgp 
+      - name: Install fastgps
         shell: bash -l {0}
         run: |
           pip install -e .

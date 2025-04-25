@@ -1,4 +1,4 @@
-site_name: "FastGP"
+site_name: "FastGPs"
 nav:
   - Home: index.md
   - API: api.md
