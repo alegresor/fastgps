@@ -10,13 +10,16 @@ nav:
   - Multitask Examples:
     - Fast GP Net: examples/multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/multitask/fgp_lattice.ipynb
+    - Standard GP: examples/multitask/standard_gp.ipynb
     - Compare GPs: examples/multitask/compare_gps_plot.ipynb
   - Batch Multitask Examples:
     - Fast GP Net: examples/batch_multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/batch_multitask/fgp_lattice.ipynb
+    - Standard GP: examples/batch_multitask/standard_gp.ipynb
   - Derivative Informed:
     - Fast GP Net: examples/derivative_informed/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/derivative_informed/fgp_lattice.ipynb
+    - Standard GP: examples/derivative_informed/standard_gp.ipynb
     - Compare GPs: examples/derivative_informed/compare_gps_plot.ipynb
   - Publications:
     - ProbNum25: examples/probnum25_paper/probnum25_paper.ipynb

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fastgp"
+version = ["dynamic"]
+description = "Fast Gaussian processes regression in O(n log n)"
+requires-python = ">=3.7"
+dependencies = [
+    "qmcpy >= 1.6.2.1",
+    "torch >= 2.0.0",
+    "numpy >= 1.17.0",
+    "scipy >= 1.13.0",
+]
+authors = [
+  {name = "Aleksei G Sorokin", email = "agsorokin3@gmail.com"},
+]
+readme = "README.md"
+license = "MIT"
+keywords = [
+        "fast",
+        "Gaussian",
+        "process",
+        "regression",
+        "low discrepancy",
+        "quasi-random",
+        "lattice",
+        "digital net",
+        "shift invariant",
+        "digitally shift invariant",
+    ]
+
+[project.urls]
+Homepage = "https://alegresor.github.io/FastGaussianProcesses/"
+Documentation = "https://alegresor.github.io/FastGaussianProcesses/"
+Repository = "https://github.com/alegresor/FastGaussianProcesses"
+Issues = "https://github.com/alegresor/FastGaussianProcesses/issues"
+
+[project.optional-dependencies]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.0",
+    "ruff>=0.9.6",
+    "pre-commit>=4.1.0",
+    "pytest>=8.3.5"
+]

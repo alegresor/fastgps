@@ -184,7 +184,7 @@ class AbstractGP(torch.nn.Module):
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
             masks (torch.Tensor): only optimize outputs corresponding to `y[...,*masks]`
-            cv_weights (Union[str,torch.Tensor]): weights for cross validation where passing `cv_weights="l2_rel"` sets 
+            cv_weights (Union[str,torch.Tensor]): weights for cross validation
             
         Returns:
             data (dict): iteration data which, dependeing on storage arguments, may include keys in 
@@ -524,6 +524,45 @@ class AbstractGP(torch.nn.Module):
         pci_low = pmean-q*perror 
         pci_high = pmean+q*perror
         return pmean,pvar,q,pci_low,pci_high
+    def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
+        """
+        Posterior cubature mean. 
+
+        Args:
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+            task (Union[int,torch.Tensor[T]]): task indices
+
+        Returns:
+            pcmean (torch.Tensor[...,T]): posterior cubature mean
+        """
+        raise NotImplementedError()
+    def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        """
+        Posterior cubature variance. 
+
+        Args:
+            task (Union[int,torch.Tensor[T]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+
+        Returns:
+            pcvar (torch.Tensor[T]): posterior cubature variance
+        """
+        raise NotImplementedError()
+    def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        """
+        Posterior cubature covariance. 
+
+        Args:
+            task0 (Union[int,torch.Tensor[T1]]): task indices
+            task1 (Union[int,torch.Tensor[T2]]): task indices
+            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature covariance.
+            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
+
+        Returns:
+            pcvar (torch.Tensor[T1,T2]): posterior cubature covariance
+        """
+        raise NotImplementedError()
     def post_cubature_error(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, confidence:float=0.99, eval:bool=True):
         """
         Posterior cubature error. 

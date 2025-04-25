@@ -5,7 +5,7 @@ doctests:
 	pytest --doctest-modules fastgp/ -W ignore --no-header
 
 nbtests:
-	pytest --nbval docs/ --no-header
+	pytest --nbval --cache-clear  docs/ --no-header
 
 tests: doctests nbtests
 

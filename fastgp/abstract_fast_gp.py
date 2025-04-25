@@ -42,16 +42,6 @@ class AbstractFastGP(AbstractGP):
             self.inv_log_det_cache_dict[ntup] = _FastInverseLogDetCache(self,n)
         return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
-        """
-        Posterior cubature mean. 
-
-        Args:
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (Union[int,torch.Tensor[T]]): task indices
-
-        Returns:
-            pcmean (torch.Tensor[...,T]): posterior cubature mean
-        """
         kmat_tasks = self.gram_matrix_tasks
         coeffs = self.coeffs
         if eval:
@@ -69,17 +59,6 @@ class AbstractFastGP(AbstractGP):
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
     def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
-        """
-        Posterior cubature variance. 
-
-        Args:
-            task (Union[int,torch.Tensor[T]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-
-        Returns:
-            pcvar (torch.Tensor[T]): posterior cubature variance
-        """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
@@ -108,18 +87,6 @@ class AbstractFastGP(AbstractGP):
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar[...,0] if inttask else pcvar
     def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
-        """
-        Posterior cubature covariance. 
-
-        Args:
-            task0 (Union[int,torch.Tensor[T1]]): task indices
-            task1 (Union[int,torch.Tensor[T2]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature covariance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-
-        Returns:
-            pcvar (torch.Tensor[T1,T2]): posterior cubature covariance
-        """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
@@ -207,11 +174,33 @@ class AbstractFastGP(AbstractGP):
         assert x.size(-1)==self.d and z.size(-1)==self.d
         return self._kernel_from_parts(self._kernel_parts(x,z,beta0,beta1),beta0,beta1,c0,c1)
     def ft(self, x):
+        """
+        One dimensional fast transform along the last dimenions. 
+            For `FastGPLattice` this is the orthonormal Fast Fourier Transform (FFT). 
+            For `FastGPDigitalNetB2` this is the orthonormal Fast Walsh Hadamard Transform (FWHT). 
+        
+        Args: 
+            x (torch.Tensor): inputs to be transformed along the last dimension. Require `n = x.size(-1)` is a power of 2. 
+        
+        Returns: 
+            y (torch.Tensor): transformed inputs with the same shape as `x` 
+        """
         xmean = x.mean(-1)
         y = self.ft_unstable(x-xmean[...,None])
         y[...,0] += xmean*np.sqrt(x.size(-1))
         return y
     def ift(self, x):
+        """
+        One dimensional inverse fast transform along the last dimenions. 
+            For `FastGPLattice` this is the orthonormal Inverse Fast Fourier Transform (IFFT). 
+            For `FastGPDigitalNetB2` this is the orthonormal Fast Walsh Hadamard Transform (FWHT). 
+        
+        Args: 
+            x (torch.Tensor): inputs to be transformed along the last dimension. Require `n = x.size(-1)` is a power of 2. 
+        
+        Returns: 
+            y (torch.Tensor): transformed inputs with the same shape as `x` 
+        """
         xmean = x.mean(-1)
         y = self.ift_unstable(x-xmean[...,None])
         y[...,0] += xmean*np.sqrt(x.size(-1))

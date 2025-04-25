@@ -293,17 +293,6 @@ class StandardGP(AbstractGP):
         torch.set_grad_enabled(incoming_grad_enabled)
         return y
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
-        r"""
-        Posterior cubature mean. 
-
-        Args:
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            task (Union[int,torch.Tensor[T]]): task indices
-            integrate_unit_cube (bool): If true, integrate over $[0,1]^d$, otherwise integrate over $\mathbb{R}^d$
-
-        Returns:
-            pcmean (torch.Tensor[...,T]): posterior cubature mean
-        """
         kmat_tasks = self.gram_matrix_tasks
         coeffs = self.coeffs
         if eval:
@@ -324,18 +313,6 @@ class StandardGP(AbstractGP):
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
     def post_cubature_var(self, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
-        r"""
-        Posterior cubature variance. 
-
-        Args:
-            task (Union[int,torch.Tensor[T]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature variance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            integrate_unit_cube (bool): If true, integrate over $[0,1]^d$, otherwise integrate over $\mathbb{R}^d$
-
-        Returns:
-            pcvar (torch.Tensor[T]): posterior cubature variance
-        """
         assert integrate_unit_cube, "undefinted posterior variance when integrating first term over all reals"
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
@@ -366,19 +343,6 @@ class StandardGP(AbstractGP):
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcvar[...,0] if inttask else pcvar
     def post_cubature_cov(self, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
-        r"""
-        Posterior cubature covariance. 
-
-        Args:
-            task0 (Union[int,torch.Tensor[T1]]): task indices
-            task1 (Union[int,torch.Tensor[T2]]): task indices
-            n (Union[int,torch.Tensor[num_tasks]]): number of points at which to evaluate the posterior cubature covariance.
-            eval (bool): if `True`, disable gradients, otherwise use `torch.is_grad_enabled()`
-            integrate_unit_cube (bool): If true, integrate over $[0,1]^d$, otherwise integrate over $\mathbb{R}^d$
-
-        Returns:
-            pcvar (torch.Tensor[T1,T2]): posterior cubature covariance
-        """
         assert integrate_unit_cube, "undefinted posterior variance when integrating first term over all reals"
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
