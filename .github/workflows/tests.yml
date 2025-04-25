@@ -23,6 +23,7 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install -e .
+          pip install pytest
       - name: Doctests
         shell: bash -l {0}
         run: |

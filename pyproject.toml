@@ -10,7 +10,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "fastgps"
-version = "0.0.1"
+version = "0.0.2"
 description = "Fast Gaussian processes regression in O(n log n)"
 requires-python = ">=3.7"
 dependencies = [
@@ -38,10 +38,9 @@ keywords = [
     ]
 
 [project.urls]
-Homepage = "https://alegresor.github.io/FastGaussianProcesses/"
-Documentation = "https://alegresor.github.io/FastGaussianProcesses/"
-Repository = "https://github.com/alegresor/FastGaussianProcesses"
-Issues = "https://github.com/alegresor/FastGaussianProcesses/issues"
+Documentation = "https://alegresor.github.io/fastgps/"
+Repository = "https://github.com/alegresor/fastgps"
+Issues = "https://github.com/alegresor/fastgps/issues"
 
 [project.optional-dependencies]
 dev = [
