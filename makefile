@@ -16,3 +16,6 @@ fix_nbtests:
 	for f in $$(find docs -not -name '*-checkpoint.ipynb' -and -name '*.ipynb'); do jupyter nbconvert --to notebook --execute --inplace "$$f"; done
 
 fix: fix_doctests fix_nbtests
+
+mkdocsserve:
+	echo "here" & mkdocs serve
