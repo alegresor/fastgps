@@ -8,22 +8,18 @@
 requires = ["pdm-backend >= 2.4.0"]
 build-backend = "pdm.backend"
 
+[project.urls]
+Documentation = "https://alegresor.github.io/fastgps/"
+Repository = "https://github.com/alegresor/fastgps"
+Issues = "https://github.com/alegresor/fastgps/issues"
+
 [project]
 name = "fastgps"
-version = "0.0.2"
 description = "Fast Gaussian processes regression in O(n log n)"
-requires-python = ">=3.7"
-dependencies = [
-    "qmcpy >= 1.6.2.1",
-    "torch >= 2.0.0",
-    "numpy >= 1.17.0",
-    "scipy >= 1.13.0",
-]
 authors = [
-  {name = "Aleksei G Sorokin", email = "agsorokin3@gmail.com"},
+    {name="Aleksei G Sorokin", email="agsorokin3@gmail.com"},
 ]
 readme = "README.md"
-license = "MIT"
 keywords = [
         "fast",
         "Gaussian",
@@ -36,11 +32,15 @@ keywords = [
         "shift invariant",
         "digitally shift invariant",
     ]
-
-[project.urls]
-Documentation = "https://alegresor.github.io/fastgps/"
-Repository = "https://github.com/alegresor/fastgps"
-Issues = "https://github.com/alegresor/fastgps/issues"
+license = "MIT"
+dynamic = ["version"]
+requires-python = ">= 3.7"
+dependencies = [
+    "qmcpy >= 1.6.2.1",
+    "torch >= 2.0.0",
+    "numpy >= 1.17.0",
+    "scipy >= 1.13.0",
+]
 
 [project.optional-dependencies]
 dev = [ # pip install -e .[dev]
@@ -56,3 +56,7 @@ dev = [ # pip install -e .[dev]
     "mkdocs-jupyter >= 0.25.0",
     "mkdocstrings-python >= 1.16.0",
 ]
+
+[tool.pdm.version]
+source = "file"
+path = "fastgps/__init__.py"
