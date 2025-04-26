@@ -17,5 +17,5 @@ fix_nbtests:
 
 fix: fix_doctests fix_nbtests
 
-mkdocsserve:
-	echo "here" & mkdocs serve
+doc:
+	cp README.md docs/index.md & mkdocs serve

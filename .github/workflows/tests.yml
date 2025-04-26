@@ -15,28 +15,10 @@ jobs:
         with:
           miniforge-version: "latest"
           auto-activate-base: true
-      - name: Python Version
-        shell: bash -l {0}
-        run: |
-          python -V
-      - name: Install Base Dependencies 
-        shell: bash -l {0}
-        run: |
-          pip install -e .
-          pip install pytest
-      - name: Doctests
-        shell: bash -l {0}
-        run: |
-          make doctests
-      - name: Install Dev Dependencies 
-        shell: bash -l {0}
-        run: |
-          pip install -e .[dev]
-      - name: Print Conda Env 
-        shell: bash -l {0}
-        run: |
-          conda env export
-      - name: Notebook Tests
-        shell: bash -l {0}
-        run: | 
-          make nbtests 
+      - run: python -V
+      - run: pip install -e .
+      - run: pip install pytest
+      - run: make doctests
+      - run: pip install -e .[dev]
+      - run: conda env export
+      - run: make nbtests 
