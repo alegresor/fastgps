@@ -260,11 +260,11 @@ class AbstractGP(torch.nn.Module):
                 loss = 1/2*(term1+term2+mll_const)
                 metric_val = -loss
             elif loss_metric=="CV":
-                inv_diag = inv_log_det_cache.get_inv_diag()
-                term1 = term2 = torch.nan*torch.ones(1)
+                coeffs = self.coeffs
                 del os.environ["FASTGP_FORCE_RECOMPILE"]
-                coeffs = self.coeffs # avoid repeated Gram matrix inverse computations
+                inv_diag = inv_log_det_cache.get_inv_diag()
                 os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+                term1 = term2 = torch.nan*torch.ones(1)
                 squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
                 if masks is None:
                     loss = squared_sums.sum()

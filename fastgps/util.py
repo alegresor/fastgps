@@ -368,15 +368,18 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
         denom = ((tr_k_inv/self.n.sum())**2).real
         return numer,denom
     def get_inv_diag(self):
-        # there should be a more efficient way than this current O(n^2 log n) approach 
-        inv,logdet = self()
-        del os.environ["FASTGP_FORCE_RECOMPILE"]
-        nsum = self.fgp.n.sum()
-        eye = torch.eye(nsum,device=self.fgp.device).reshape([nsum]+[1]*(inv.ndim-3)+[nsum])
-        kmatinv = self.gram_matrix_solve(eye).permute([1+i for i in range(inv.ndim-3)]+[0,-1])
-        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
-        nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
-        inv_diag = kmatinv[...,nrange,nrange]
+        if self.fgp.num_tasks==1:
+            lam = self.fgp.get_lam(0,0)
+            rootn = np.sqrt(lam.size(-1))
+            inv_diag = (1/(lam*rootn)).mean(-1,keepdim=True)
+        else:
+            # there should be a more efficient way than this current O(n^2 log n) approach 
+            inv,logdet = self()
+            nsum = self.fgp.n.sum()
+            eye = torch.eye(nsum,device=self.fgp.device).reshape([nsum]+[1]*(inv.ndim-3)+[nsum])
+            kmatinv = self.gram_matrix_solve(eye).permute([1+i for i in range(inv.ndim-3)]+[0,-1])
+            nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
+            inv_diag = kmatinv[...,nrange,nrange]
         return inv_diag
 
 class _CoeffsCache(object):
