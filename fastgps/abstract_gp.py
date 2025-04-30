@@ -306,13 +306,14 @@ class AbstractGP(torch.nn.Module):
     def _sample(self, seq, n_min, n_max):
         x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(self.device)
         return x,x
-    def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
+    def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None, binary:bool=False):
         """
         Get the next sampling locations. 
 
         Args:
             n (Union[int,torch.Tensor]): maximum sample index per task
             task (Union[int,torch.Tensor]): task index
+            binary (bool): if True, return the int representation of digital net points 
         
         Returns:
             x_next (Union[torch.Tensor,List]): next samples in the sequence
@@ -325,7 +326,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all() and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2 greater than the current number of samples"
-        x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
+        x_next = [self.xxb_seqs[l][self.n[l]:n[i]][1 if binary else 0] for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
