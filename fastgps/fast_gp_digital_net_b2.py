@@ -216,13 +216,14 @@ class FastGPDigitalNetB2(AbstractFastGP):
         assert all(isinstance(seqs[i],qmcpy.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qmcpy.DigitalNetB2 instances"
         assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
-        assert all(seqs[i].t_lms<64 for i in range(num_tasks)), "each seq must have t_lms<64"
         if num_tasks==1:
             assert seqs[0].randomize in ['FALSE','DS','LMS','LMS_DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS_DS']"
         else:
             assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
-        assert all(seqs[i].t_lms==seqs[0].t_lms for i in range(num_tasks)), "all seqs should have the same t_lms"
-        self.t = seqs[0].t_lms
+        ts = torch.tensor([seqs[i].t_max if seqs[i].randomize=="FALSE" else seqs[i].t_lms for i in range(num_tasks)])
+        assert (ts<64).all(), "each seq must have t_lms<64"
+        assert (ts==ts[0]).all(), "all seqs should have the same t"
+        self.t = ts[0].item()
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
         super().__init__(
             alpha,
