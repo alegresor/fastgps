@@ -197,7 +197,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts` argument
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
-        assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.dig_shift_invar_ops.WEIGHTEDWALSHFUNCSPOS.keys())
         if num_tasks is None: 
             solo_task = True
             default_task = 0 
@@ -260,7 +259,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives_coeffs,
             adaptive_nugget,
         )
-        assert (self.alpha<=4).all() and (self.alpha>=2).all()
+        assert (1<=self.alpha).all() and (self.alpha<=4).all()
+        if any(not (deriv==0).all() for deriv in self.derivatives): assert (self.alpha>=2).all(), "using derivatives requires (alpha>=2).all()"
     def get_omega(self, m):
         return 1
     def _sample(self, seq, n_min, n_max):
@@ -291,5 +291,11 @@ class FastGPDigitalNetB2(AbstractFastGP):
         beta_plus_kappa = beta+kappa
         ind = (beta_plus_kappa>0).to(torch.int64)
         order = self.alpha-beta_plus_kappa
-        assert (2<=order).all() and (order<=4).all(), "order must all be between 2 and 4, but got order = %s. Try increasing alpha"%str(order)
-        return (-2)**beta_plus_kappa*(ind+torch.stack([qmcpy.kernel_methods.weighted_walsh_funcs(order[j].item(),delta[...,j],self.t)-1 for j in range(self.d)],-1))
+        assert (1<=order).all() and (order<=4).all(), "order must all be between 2 and 4, but got order = %s. Try increasing alpha"%str(order)
+        omega = torch.empty(delta.shape,device=self.device) 
+        for j in range(self.d):
+            if order[j]==1:
+                omega[...,j] = 6*(1/6-2**(torch.log2(delta[...,j]).floor()-self.t-1))
+            else:
+                omega[...,j] = qmcpy.kernel_methods.weighted_walsh_funcs(order[j].item(),delta[...,j],self.t)-1
+        return (-2)**beta_plus_kappa*(ind+omega)
