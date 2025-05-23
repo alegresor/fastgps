@@ -382,6 +382,25 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
             inv_diag = kmatinv[...,nrange,nrange]
         return inv_diag
 
+class _PriorMeanCache(object):
+    def __init__(self, fgp):
+        self.fgp = fgp 
+    def _frozen_equal(self):
+        for k,v in self.fgp.prior_mean_module.named_parameters():
+            if (self.fozen_named_parameters[k]!=v).any():
+                return False 
+        return True
+    def _force_recompile(self):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and any(v.requires_grad for v in self.fgp.prior_mean_module.parameters())
+    def _freeze(self):
+        self.fozen_named_parameters = {k:v.clone() for k,v in self.prior_mean_module.named_parameters()}
+    def __call__(self):
+        if not hasattr(self,"vals") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
+            assert False
+            self._freeze()
+            self.n = self.fgp.n.clone()
+        return self.vals 
+
 class _CoeffsCache(object):
     def __init__(self, fgp):
         self.fgp = fgp

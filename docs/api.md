@@ -5,3 +5,4 @@
 ::: fastgps.abstract_fast_gp
 ::: fastgps.fast_gp_lattice
 ::: fastgps.fast_gp_digital_net_b2
+::: fastgps.prior_means
