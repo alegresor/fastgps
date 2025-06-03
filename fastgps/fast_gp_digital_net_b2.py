@@ -219,7 +219,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             assert seqs[0].randomize in ['FALSE','DS','LMS','LMS_DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS_DS']"
         else:
             assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
-        ts = torch.tensor([seqs[i].t_max if seqs[i].randomize=="FALSE" else seqs[i].t_lms for i in range(num_tasks)])
+        ts = torch.tensor([seqs[i].t for i in range(num_tasks)])
         assert (ts<64).all(), "each seq must have t_lms<64"
         assert (ts==ts[0]).all(), "all seqs should have the same t"
         self.t = ts[0].item()
