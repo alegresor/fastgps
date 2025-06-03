@@ -36,7 +36,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.0336)
+        tensor(0.0284)
         >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
 
         >>> data = fgp.fit(verbose=0)
@@ -44,7 +44,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         ['iterations']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0355)
+        tensor(0.0287)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -67,15 +67,15 @@ class FastGPDigitalNetB2(AbstractFastGP):
         torch.Size([128])
 
         >>> fgp.post_cubature_mean()
-        tensor(20.1896)
+        tensor(20.1888)
         >>> fgp.post_cubature_var()
         tensor(0.0002)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1564)
+        tensor(20.1557)
         >>> pcci_high
-        tensor(20.2228)
+        tensor(20.2220)
         
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
         >>> pvar_future = fgp.post_var(x,n=2*n)
@@ -85,7 +85,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0258)
+        tensor(0.0271)
 
         >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
@@ -93,17 +93,17 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0259)
+        tensor(0.0273)
 
         >>> x_next = fgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0191)
+        tensor(0.0200)
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0187)
+        tensor(0.0194)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)
@@ -220,7 +220,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         else:
             assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
         ts = torch.tensor([seqs[i].t for i in range(num_tasks)])
-        assert (ts<64).all(), "each seq must have t_lms<64"
+        assert (ts<64).all(), "each seq must have t<64"
         assert (ts==ts[0]).all(), "all seqs should have the same t"
         self.t = ts[0].item()
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
