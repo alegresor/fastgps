@@ -36,7 +36,7 @@ license = "MIT"
 dynamic = ["version"]
 requires-python = ">= 3.7"
 dependencies = [
-    "qmcpy >= 1.6.2.1",
+    "qmcpy >= 1.6.3a0",
     "torch >= 2.0.0",
     "numpy >= 1.17.0",
     "scipy >= 1.13.0",
