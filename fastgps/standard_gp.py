@@ -278,14 +278,20 @@ class StandardGP(AbstractGP):
         assert x.size(-1)==self.d and z.size(-1)==self.d
         incoming_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(True)
-        xtileshape = tuple(torch.ceil(torch.tensor(z.shape[:-1])/torch.tensor(x.shape[:-1])).to(int))
-        xgs = [torch.tile(x[...,j].clone().requires_grad_(True),xtileshape) for j in range(self.d)]
-        if (beta0>0).any(): [xgj.requires_grad_(True) for xgj in xgs]
-        xg = torch.stack(xgs,dim=-1)
-        ztileshape = tuple(torch.ceil(torch.tensor(x.shape[:-1])/torch.tensor(z.shape[:-1])).to(int))
-        zgs = [torch.tile(z[...,j].clone().requires_grad_(True),ztileshape) for j in range(self.d)]
-        if (beta1>0).any(): [zgj.requires_grad_(True) for zgj in zgs]
-        zg = torch.stack(zgs,dim=-1)
+        if (beta0>0).any():
+            xtileshape = tuple(torch.ceil(torch.tensor(z.shape[:-1])/torch.tensor(x.shape[:-1])).to(int))
+            xgs = [torch.tile(x[...,j].clone().requires_grad_(True),xtileshape) for j in range(self.d)]
+            [xgj.requires_grad_(True) for xgj in xgs]
+            xg = torch.stack(xgs,dim=-1)
+        else:
+            xg = x
+        if (beta1>0).any():
+            ztileshape = tuple(torch.ceil(torch.tensor(x.shape[:-1])/torch.tensor(z.shape[:-1])).to(int))
+            zgs = [torch.tile(z[...,j].clone().requires_grad_(True),ztileshape) for j in range(self.d)]
+            [zgj.requires_grad_(True) for zgj in zgs]
+            zg = torch.stack(zgs,dim=-1)
+        else:
+            zg = z
         y = 0
         ndim = xg.ndim
         lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
