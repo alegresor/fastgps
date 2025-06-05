@@ -1,5 +1,6 @@
 from .abstract_gp import AbstractGP
 from .util import (
+    DummyDiscreteDistrib,
     _StandardInverseLogDetCache,
 )
 import torch
@@ -153,6 +154,7 @@ class StandardGP(AbstractGP):
             derivatives_coeffs:list = None,
             kernel_class:str = "Gaussian",
             adaptive_nugget:bool = True,
+            data = None
             ):
         """
         Args:
@@ -203,12 +205,21 @@ class StandardGP(AbstractGP):
             assert isinstance(num_tasks,int) and num_tasks>0
             solo_task = False
             default_task = torch.arange(num_tasks)
-        if isinstance(seqs,int):
-            seqs = np.array([qmcpy.DigitalNetB2(seqs,seed=seed) for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
-        if isinstance(seqs,qmcpy.DiscreteDistribution):
-            seqs = np.array([seqs],dtype=object)
-        if isinstance(seqs,list):
-            seqs = np.array(seqs,dtype=object)
+        if data is not None:
+            assert isinstance(seqs,int), "passing in data requires seqs (the first argument) is a int specifying the dimension"
+            assert isinstance(data,dict) and "x" in data and "y" in data, "data must be a dict with keys 'x' and 'y'"
+            if isinstance(data["x"],torch.Tensor): data["x"] = [data["x"]]
+            if isinstance(data["y"],torch.Tensor): data["y"] = [data["y"]]
+            assert isinstance(data["x"],list) and len(data["x"])==num_tasks and all(isinstance(x_l,torch.Tensor) and x_l.ndim==2 and x_l.size(1)==seqs for x_l in data["x"]), "data['x'] should be a list of 2d tensors of length num_tasks with each number of columns equal to the dimension"
+            assert isinstance(data["y"],list) and len(data["y"])==num_tasks and all(isinstance(y_l,torch.Tensor) and y_l.ndim>=1 for y_l in data["y"]), "data['y'] should be a list of tensors of length num_tasks"
+            seqs = np.array([DummyDiscreteDistrib(data["x"][l].cpu().detach().numpy()) for l in range(num_tasks)],dtype=object)
+        else:
+            if isinstance(seqs,int):
+                seqs = np.array([qmcpy.DigitalNetB2(seqs,seed=seed,order="GRAY") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)],dtype=object)
+            if isinstance(seqs,qmcpy.DiscreteDistribution):
+                seqs = np.array([seqs],dtype=object)
+            if isinstance(seqs,list):
+                seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         kernel_class = kernel_class.lower()
@@ -246,6 +257,8 @@ class StandardGP(AbstractGP):
             derivatives_coeffs,
             adaptive_nugget,
         )
+        if data is not None:
+            self.add_y_next(data["y"],task=torch.arange(self.num_tasks))
     def get_default_optimizer(self, lr):
         # if lr is None: lr = 1e-1
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
@@ -316,7 +329,7 @@ class StandardGP(AbstractGP):
         assert integrate_unit_cube, "undefinted posterior variance when integrating first term over all reals"
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        assert isinstance(n,torch.Tensor)
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         l_chol = inv_log_det_cache()[0]
@@ -346,7 +359,7 @@ class StandardGP(AbstractGP):
         assert integrate_unit_cube, "undefinted posterior variance when integrating first term over all reals"
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        assert isinstance(n,torch.Tensor)
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         l_chol = inv_log_det_cache()[0]
