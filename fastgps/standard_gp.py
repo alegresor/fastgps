@@ -223,7 +223,8 @@ class StandardGP(AbstractGP):
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         kernel_class = kernel_class.lower()
-        assert kernel_class in ["gaussian"]
+        self.available_kernel_classes = ['gaussian','matern12','matern32','matern52']
+        assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         super().__init__(
             seqs,
@@ -291,8 +292,17 @@ class StandardGP(AbstractGP):
         scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
         if self.kernel_class=="gaussian":
             y_base = scale*torch.exp(-(xg-zg)**2/(2*lengthscales)).prod(-1)
+        elif self.kernel_class=="matern12":
+            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
+            y_base = torch.exp(-dists)
+        elif self.kernel_class=="matern32":
+            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
+            y_base = (1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
+        elif self.kernel_class=="matern52":
+            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
+            y_base = ((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
         else:
-            raise Exception("kernel_class must be in ['gaussian']")
+            raise Exception("kernel_class must be in %s"%str(self.available_kernel_classes))
         for i0 in range(len(c0)):
             for i1 in range(len(c1)):
                 y_part = y_base.clone()
