@@ -154,7 +154,9 @@ class StandardGP(AbstractGP):
             derivatives_coeffs:list = None,
             kernel_class:str = "Gaussian",
             adaptive_nugget:bool = True,
-            data = None
+            data:dict = None,
+            compile_dist_func:bool = False,
+            compile_dist_func_kwargs:dict = {},
             ):
         """
         Args:
@@ -196,6 +198,9 @@ class StandardGP(AbstractGP):
                 ```
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
+            data (dict): dictory of data with keys 'x' and 'y' where data['x'] and data['y'] are both `torch.Tensor`s or list of `torch.Tensor`s with lengths equal to the number of tasks
+            compile_dist_func (bool): if `True`, use compile the pairwise distance function for memory efficiency when evaluating the kernel matrix.
+            compile_dist_func_kwargs (dict): keyword arguments to `torch.compile` used when `compile_dist_func=True`.
         """
         if num_tasks is None: 
             solo_task = True
@@ -226,6 +231,15 @@ class StandardGP(AbstractGP):
         self.available_kernel_classes = ['gaussian','matern12','matern32','matern52']
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
+        assert isinstance(compile_dist_func,bool)
+        if self.kernel_class=="gaussian":
+            self.unscaled_gaussian_kernel = lambda x1,x2,lengthscales: torch.exp(-((x1-x2)**2/(2*lengthscales)).sum(-1))
+            if compile_dist_func:
+                self.unscaled_gaussian_kernel = torch.compile(self.unscaled_gaussian_kernel,**compile_dist_func_kwargs)
+        elif "matern" in self.kernel_class:
+            self.parise_rel_dist_func = lambda x1,x2,lengthscales: torch.sqrt(torch.sum((x1-x2)**2/(2*lengthscales),-1))
+            if compile_dist_func:
+                self.parise_rel_dist_func = torch.compile(self.parise_rel_dist_func,**compile_dist_func_kwargs)
         super().__init__(
             seqs,
             num_tasks,
@@ -297,27 +311,30 @@ class StandardGP(AbstractGP):
         lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
         scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
         if self.kernel_class=="gaussian":
-            y_base = scale*torch.exp(-(xg-zg)**2/(2*lengthscales)).prod(-1)
+            y_base = scale*self.unscaled_gaussian_kernel(xg,zg,lengthscales)
         elif self.kernel_class=="matern12":
-            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
-            y_base = torch.exp(-dists)
+            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            y_base = scale*torch.exp(-dists)
         elif self.kernel_class=="matern32":
-            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
-            y_base = (1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
+            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            y_base = scale*(1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
         elif self.kernel_class=="matern52":
-            dists = torch.sqrt(((xg-zg)**2/(2*lengthscales)).sum(-1))
-            y_base = ((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
+            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            y_base = scale*((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
         else:
             raise Exception("kernel_class must be in %s"%str(self.available_kernel_classes))
         for i0 in range(len(c0)):
             for i1 in range(len(c1)):
-                y_part = y_base.clone()
-                for j0 in range(self.d):
-                    for k in range(beta0[i0,j0]):
-                        y_part = torch.autograd.grad(y_part,xgs[j0],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
-                for j1 in range(self.d):
-                    for k in range(beta1[i1,j1]):
-                        y_part = torch.autograd.grad(y_part,zgs[j1],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
+                if (beta0[i0]>0).any() or (beta1[i1]>0).any():
+                    y_part = y_base.clone()
+                    for j0 in range(self.d):
+                        for k in range(beta0[i0,j0]):
+                            y_part = torch.autograd.grad(y_part,xgs[j0],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
+                    for j1 in range(self.d):
+                        for k in range(beta1[i1,j1]):
+                            y_part = torch.autograd.grad(y_part,zgs[j1],grad_outputs=torch.ones_like(y_part,requires_grad=True),create_graph=True)[0]
+                else:
+                    y_part = y_base 
                 y += c0[i0]*c1[i1]*y_part
         torch.set_grad_enabled(incoming_grad_enabled)
         return y
@@ -348,7 +365,7 @@ class StandardGP(AbstractGP):
         assert isinstance(n,torch.Tensor)
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        l_chol = inv_log_det_cache()[0]
+        thetainv = inv_log_det_cache()[0]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
@@ -362,7 +379,7 @@ class StandardGP(AbstractGP):
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
-        v = torch.cholesky_solve(kints[...,None],l_chol[...,None,:,:],upper=False)[...,0]
+        v = torch.einsum("...ij,...j->...i",thetainv,kints)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
         tval = self.scale*kmat_tasks[...,task,task]*t.prod(-1)[...,None]
@@ -378,7 +395,7 @@ class StandardGP(AbstractGP):
         assert isinstance(n,torch.Tensor)
         kmat_tasks = self.gram_matrix_tasks
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        l_chol = inv_log_det_cache()[0]
+        thetainv = inv_log_det_cache()[0]
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
@@ -399,7 +416,7 @@ class StandardGP(AbstractGP):
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
-        v = torch.cholesky_solve(kints1[...,None],l_chol[...,None,:,:],upper=False)[...,0]
+        v = torch.einsum("...ij,...j->...i",thetainv,kints1)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
         tval = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]*t.prod(-1)[...,None,None]
