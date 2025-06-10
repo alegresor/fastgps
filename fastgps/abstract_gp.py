@@ -270,6 +270,7 @@ class AbstractGP(torch.nn.Module):
                     loss = squared_sums.sum()
                 else:
                     loss = squared_sums[...,*masks,0].sum()
+                metric_val = loss
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
