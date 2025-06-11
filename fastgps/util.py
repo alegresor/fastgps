@@ -1,6 +1,18 @@
 import torch 
 import os 
 import numpy as np 
+import qmcpy as qp 
+
+class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution):
+    def __init__(self, x):
+        assert isinstance(x,np.ndarray)
+        self.x = x
+        assert self.x.ndim==2 
+        self.n,self.d = x.shape
+        super(DummyDiscreteDistrib,self).__init__(dimension=x.shape[1],replications=None,seed=None,d_limit=np.inf,n_limit=np.inf)
+    def _gen_samples(self, n_min, n_max, return_unrandomized, return_binary, warn):
+        assert n_min==0 and n_max==self.n, "trying to generate samples other than the one provided is invalid"
+        return self.x[None]
 
 class _XXbSeq(object):
     def __init__(self, fgp, seq):
@@ -197,7 +209,7 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         self.fgp = fgp
         self.n = n
     def __call__(self):
-        if not hasattr(self,"l_chol") or not self._frozen_equal() or self._force_recompile():
+        if not hasattr(self,"thetainv") or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.gram_matrix_tasks
             kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
             if self.fgp.adaptive_nugget:
@@ -217,42 +229,41 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
                 kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
                 kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
                 try:
-                    self.l_chol = torch.linalg.cholesky(kmat,upper=False)
+                    l_chol = torch.linalg.cholesky(kmat,upper=False)
                     break
                 except torch._C._LinAlgError as e:
                     expected_str = "linalg.cholesky: The factorization could not be completed because the input is not positive-definite"
                     if str(e)[:len(expected_str)]!=expected_str: raise
                     spd_factor *= 2#raise Exception("Cholesky factor not SPD, try increasing noise")
             nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
-            self.logdet = 2*torch.log(self.l_chol[...,nfrange,nfrange]).sum(-1)
+            self.logdet = 2*torch.log(l_chol[...,nfrange,nfrange]).sum(-1)
+            self.thetainv = torch.cholesky_inverse(l_chol,upper=False)
             self._freeze()
-        return self.l_chol,self.logdet
+        return self.thetainv,self.logdet
     def gram_matrix_solve(self, y):
         assert y.size(-1)==self.n.sum()
-        l_chol,logdet = self()
-        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        thetainv,logdet = self()
+        v = torch.einsum("...ij,...j->...i",thetainv,y)
         return v
     def get_norm_term_logdet_term(self):
         y = torch.cat(self.fgp._y,dim=-1)
-        l_chol,logdet = self()
-        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        thetainv,logdet = self()
+        v = torch.einsum("...ij,...j->...i",thetainv,y)
         norm_term = (y*v).sum(-1,keepdim=True)
         return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
-        l_chol,logdet = self()
+        thetainv,logdet = self()
         y = torch.cat(self.fgp._y,dim=-1)
-        v = torch.cholesky_solve(y[...,None],l_chol,upper=False)[...,0]
+        v = torch.einsum("...ij,...j->...i",thetainv,y)
         numer = (v**2).sum(-1,keepdim=True)
-        l_chol_inv = torch.linalg.solve_triangular(l_chol,torch.eye(l_chol.size(-1),device=self.fgp.device),upper=False)
-        tr_k_inv = (l_chol_inv**2).sum(-1).sum(-1,keepdim=True)
-        denom = (tr_k_inv/l_chol.size(-1))**2
+        tr_k_inv = torch.einsum("...ii",thetainv)[...,None]
+        denom = (tr_k_inv/thetainv.size(-1))**2
         return numer,denom
     def get_inv_diag(self):
         # right now this costs costs O(n^3), maybe it can be done faster?
-        l_chol,logdet = self()
-        kmatinv = torch.cholesky_solve(torch.eye(l_chol.size(-1),device=self.fgp.device),l_chol,upper=False)
-        nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
-        inv_diag = kmatinv[...,nrange,nrange]
+        thetainv,logdet = self()
+        nrange = torch.arange(thetainv.size(-1),device=self.fgp.device)
+        inv_diag = thetainv[...,nrange,nrange]
         return inv_diag
     
 class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
@@ -411,4 +422,4 @@ class _CoeffsCache(object):
             self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat(self.fgp._y,dim=-1))
             self._freeze()
             self.n = self.fgp.n.clone()
-        return self.coeffs 
+        return self.coeffs  

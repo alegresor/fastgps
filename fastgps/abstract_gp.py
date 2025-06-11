@@ -270,6 +270,7 @@ class AbstractGP(torch.nn.Module):
                     loss = squared_sums.sum()
                 else:
                     loss = squared_sums[...,*masks,0].sum()
+                metric_val = loss
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -304,7 +305,7 @@ class AbstractGP(torch.nn.Module):
         if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist[:(i+1)]
         return data
     def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq.gen_samples(n_min=int(n_min),n_max=int(n_max))).to(self.device)
+        x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(self.device)
         return x,x
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """
@@ -324,7 +325,7 @@ class AbstractGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int)
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
-        assert (n>=self.n[task]).all() and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2 greater than the current number of samples"
+        assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
         x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
@@ -344,7 +345,6 @@ class AbstractGP(torch.nn.Module):
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
-        assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
         self.m = torch.where(self.n==0,-1,torch.log2(self.n)).to(int)
         for key in list(self.inv_log_det_cache_dict.keys()):
             if (torch.tensor(key)<self.n.cpu()).any():
@@ -393,7 +393,7 @@ class AbstractGP(torch.nn.Module):
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        assert isinstance(n,torch.Tensor)
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         kmat_tasks = self.gram_matrix_tasks
         if eval:
@@ -431,7 +431,7 @@ class AbstractGP(torch.nn.Module):
         """
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
-        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        assert isinstance(n,torch.Tensor)
         assert x0.ndim==2 and x0.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         assert x1.ndim==2 and x1.size(1)==self.d, "z must a torch.Tensor with shape (-1,d)"
         kmat_tasks = self.gram_matrix_tasks

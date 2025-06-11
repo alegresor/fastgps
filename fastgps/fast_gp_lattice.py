@@ -201,7 +201,7 @@ class FastGPLattice(AbstractFastGP):
             compile_fts_kwargs (dict): keyword arguments to `torch.compile`, see the `compile_fts argument`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
-        assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
+        assert isinstance(alpha,int) and alpha in qmcpy.kernel_methods.shift_invar_ops.BERNOULLIPOLYSDICT.keys(), "alpha must be in %s"%list(qmcpy.kernel_methods.util.shift_invar_ops.BERNOULLIPOLYSDICT.keys())
         if num_tasks is None: 
             solo_task = True
             default_task = 0 

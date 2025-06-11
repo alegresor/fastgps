@@ -29,6 +29,27 @@ class AbstractFastGP(AbstractGP):
         self.k1parts_seq = np.array([[_K1PartsSeq(self,self.xxb_seqs[l0],self.xxb_seqs[l1],self.derivatives[l0],self.derivatives[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1,self.derivatives[l0],self.derivatives[l1],self.derivatives_coeffs[l0],self.derivatives_coeffs[l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
+    def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
+        n_og = n 
+        if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
+        if isinstance(n,list): n = torch.tensor(n,dtype=int)
+        assert isinstance(n,torch.Tensor) and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2"
+        return super().get_x_next(n=n_og,task=task)
+    def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
+        super().add_y_next(y_next=y_next,task=task)
+        assert torch.logical_or(self.n==0,(self.n&(self.n-1)==0)).all(), "total samples must be power of 2"
+    def post_var(self, x:torch.Tensor, task:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        n_og = n 
+        if n is None: n = self.n
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
+        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
+        return super().post_var(x=x,task=task,n=n_og,eval=eval)
+    def post_cov(self, x0:torch.Tensor, x1:torch.Tensor, task0:Union[int,torch.Tensor]=None, task1:Union[int,torch.Tensor]=None, n:Union[int,torch.Tensor]=None, eval:bool=True):
+        n_og = n 
+        if n is None: n = self.n
+        if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
+        assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two"
+        return super().post_cov(x0=x0,x1=x1,task0=task0,task1=task1,n=n_og,eval=eval)
     def get_default_optimizer(self, lr):
         # if lr is None: lr = 1e-1
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
