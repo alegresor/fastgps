@@ -268,7 +268,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         x = self._convert_from_b(_x)
         return x,_x
     def _convert_to_b(self, x):
-        return torch.floor((x%1)*2**(self.t)).to(self._XBDTYPE)
+        return torch.floor((x%1)*2.**self.t).to(self._XBDTYPE)
     def _convert_from_b(self, xb):
         return xb*2**(-self.t)
     def _ominus(self, x_or_xb, z_or_zb):

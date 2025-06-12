@@ -225,7 +225,7 @@ class AbstractGP(torch.nn.Module):
             masks = torch.atleast_2d(masks)
             assert masks.ndim==2
             assert len(masks)<=len(self.shape_batch)
-            d_out = torch.empty(self.shape_batch)[...,*masks].numel()
+            d_out = torch.empty(self.shape_batch)[...,masks].numel()
         else:
             d_out = int(torch.tensor(self.shape_batch).prod())
         if verbose:
@@ -245,8 +245,8 @@ class AbstractGP(torch.nn.Module):
                     term1 = numer 
                     term2 = denom
                 else:
-                    term1 = numer[...,*masks,:]
-                    term2 = denom.expand(list(self.shape_batch)+[1])[...,*masks,:]
+                    term1 = numer[...,masks,:]
+                    term2 = denom.expand(list(self.shape_batch)+[1])[...,masks,:]
                 loss = (term1/term2).sum()
                 metric_val = loss
             elif loss_metric=="MLL":
@@ -255,8 +255,8 @@ class AbstractGP(torch.nn.Module):
                     term1 = norm_term.sum()
                     term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
                 else:
-                    term1 = norm_term[...,*masks,0].sum()
-                    term2 = logdet.expand(list(self.shape_batch)+[1])[...,*masks,0].sum()
+                    term1 = norm_term[...,masks,0].sum()
+                    term2 = logdet.expand(list(self.shape_batch)+[1])[...,masks,0].sum()
                 loss = 1/2*(term1+term2+mll_const)
                 metric_val = -loss
             elif loss_metric=="CV":
@@ -269,7 +269,7 @@ class AbstractGP(torch.nn.Module):
                 if masks is None:
                     loss = squared_sums.sum()
                 else:
-                    loss = squared_sums[...,*masks,0].sum()
+                    loss = squared_sums[...,masks,0].sum()
                 metric_val = loss
             else:
                 assert False, "loss_metric parsing implementation error"
