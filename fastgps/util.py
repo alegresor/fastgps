@@ -10,7 +10,8 @@ class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution
         assert self.x.ndim==2 
         self.n,self.d = x.shape
         super(DummyDiscreteDistrib,self).__init__(dimension=x.shape[1],replications=None,seed=None,d_limit=np.inf,n_limit=np.inf)
-    def _gen_samples(self, n_min, n_max, return_unrandomized, return_binary, warn):
+    def _gen_samples(self, n_min, n_max, return_binary, warn):
+        assert return_binary is False
         assert n_min==0 and n_max==self.n, "trying to generate samples other than the one provided is invalid"
         return self.x[None]
 
