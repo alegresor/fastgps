@@ -413,7 +413,7 @@ class StandardGP(AbstractGP):
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
-        v = torch.einsum("...ij,...j->...i",thetainv,kints)
+        v = torch.einsum("...ij,...j->...i",thetainv[...,None,:,:],kints)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
         tval = self.scale*kmat_tasks[...,task,task]*t.prod(-1)[...,None]
@@ -450,7 +450,7 @@ class StandardGP(AbstractGP):
         kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
-        v = torch.einsum("...ij,...j->...i",thetainv,kints1)
+        v = torch.einsum("...ij,...j->...i",thetainv[...,None,:,:],kints1)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
         t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
         tval = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]*t.prod(-1)[...,None,None]

@@ -1,4 +1,4 @@
-__version__ = "0.0.4.1c"
+__version__ = "0.0.4.2b"
 
 from .fast_gp_lattice import FastGPLattice
 from .fast_gp_digital_net_b2 import FastGPDigitalNetB2
