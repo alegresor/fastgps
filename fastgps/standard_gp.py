@@ -237,9 +237,9 @@ class StandardGP(AbstractGP):
             if compile_dist_func:
                 self.unscaled_gaussian_kernel = torch.compile(self.unscaled_gaussian_kernel,**compile_dist_func_kwargs)
         elif "matern" in self.kernel_class:
-            self.parise_rel_dist_func = lambda x1,x2,lengthscales: torch.sqrt(torch.sum((x1-x2)**2/(2*lengthscales),-1))
+            self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/torch.sqrt(2*lengthscales),ord=2,dim=-1)
             if compile_dist_func:
-                self.parise_rel_dist_func = torch.compile(self.parise_rel_dist_func,**compile_dist_func_kwargs)
+                self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
         super().__init__(
             seqs,
             num_tasks,
@@ -313,13 +313,13 @@ class StandardGP(AbstractGP):
         if self.kernel_class=="gaussian":
             y_base = scale*self.unscaled_gaussian_kernel(xg,zg,lengthscales)
         elif self.kernel_class=="matern12":
-            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*torch.exp(-dists)
         elif self.kernel_class=="matern32":
-            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*(1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
         elif self.kernel_class=="matern52":
-            dists = self.parise_rel_dist_func(xg,zg,lengthscales)
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
         else:
             raise Exception("kernel_class must be in %s"%str(self.available_kernel_classes))

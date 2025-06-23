@@ -207,7 +207,7 @@ class AbstractGP(torch.nn.Module):
         assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
         assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
-        assert isinstance(stop_crit_wait_iterations,int) and stop_crit_wait_iterations>0
+        assert (isinstance(stop_crit_wait_iterations,int) or stop_crit_wait_iterations==np.inf) and stop_crit_wait_iterations>0
         assert masks is None or (isinstance(masks,torch.Tensor))
         loss_metric = loss_metric.upper()
         logtol = np.log(1+stop_crit_improvement_threshold)
