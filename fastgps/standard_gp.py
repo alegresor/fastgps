@@ -2,7 +2,9 @@ from .abstract_gp import AbstractGP
 from .util import (
     DummyDiscreteDistrib,
     _StandardInverseLogDetCache,
-    EPS64
+    tf_explinear_eps_inv,
+    tf_explinear_eps,
+    tf_identity,
 )
 import torch
 import numpy as np
@@ -51,7 +53,7 @@ class StandardGP(AbstractGP):
         ['iterations']
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0822)
+        tensor(0.0833)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -74,15 +76,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.0282)
+        tensor(20.0121)
         >>> sgp.post_cubature_var()
-        tensor(0.0082)
+        tensor(0.0064)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.7948)
+        tensor(19.8064)
         >>> pcci_high
-        tensor(20.2616)
+        tensor(20.2179)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -92,7 +94,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1161)
+        tensor(0.1106)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
@@ -106,7 +108,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0990)
+        tensor(0.1003)
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
@@ -136,12 +138,12 @@ class StandardGP(AbstractGP):
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
             rq_param:float = 1.,
             device:torch.device = "cpu",
-            tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x, lambda x: x)),#((lambda x: x**(1/3)),(lambda x: x**3)),
-            tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_rq_param:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_scale:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_lengthscales:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_noise:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_factor_task_kernel:Tuple[callable,callable] = (tf_identity,tf_identity),
+            tfs_noise_task_kernel:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_rq_param:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
@@ -305,8 +307,8 @@ class StandardGP(AbstractGP):
     def get_default_optimizer(self, lr):
         # if lr is None: lr = 1e-1
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
-        if lr is None: lr = 1e-1
-        return torch.optim.Rprop(self.parameters(),lr=lr)
+        if lr is None: lr = 1e0
+        return torch.optim.Rprop(self.parameters(),lr=lr,etas=(0.5,1.2),step_sizes=(0,10))
     def get_inv_log_det_cache(self, n=None):
         if n is None: n = self.n
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()

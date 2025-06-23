@@ -1,4 +1,10 @@
 from .abstract_fast_gp import AbstractFastGP
+from .util import (
+    EPS64,
+    tf_explinear_eps_inv,
+    tf_explinear_eps,
+    tf_identity,
+)
 import torch 
 import qmcpy as qmcpy
 import numpy as np
@@ -42,14 +48,14 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(7.0015e-09)
+        tensor(6.9917e-09)
 
         >>> data = fgp.fit(verbose=0)
         >>> list(data.keys())
         ['iterations']
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0361)
+        tensor(0.0358)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -74,13 +80,13 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(3.1129e-06)
+        tensor(2.9969e-06)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1797)
+        tensor(20.1798)
         >>> pcci_high
-        tensor(20.1888)
+        tensor(20.1887)
 
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
         >>> pvar_future = fgp.post_var(x,n=2*n)
@@ -90,7 +96,7 @@ class FastGPLattice(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0304)
+        tensor(0.0309)
 
         >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(fgp.post_var(x),pvar_future)
@@ -104,7 +110,7 @@ class FastGPLattice(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0277)
+        tensor(0.0276)
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
@@ -129,16 +135,16 @@ class FastGPLattice(AbstractFastGP):
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1., 
-            noise:float = 1e-8, 
+            noise:float = 2*EPS64, 
             factor_task_kernel:Union[torch.Tensor,int] = 1., 
             rank_factor_task_kernel:int = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
             device:torch.device = "cpu",
-            tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x, lambda x: x)),#((lambda x: x**(1/3)),(lambda x: x**3)),
-            tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_scale:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_lengthscales:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_noise:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_factor_task_kernel:Tuple[callable,callable] = (tf_identity,tf_identity),
+            tfs_noise_task_kernel:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 

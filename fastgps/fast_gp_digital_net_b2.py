@@ -1,4 +1,10 @@
 from .abstract_fast_gp import AbstractFastGP
+from .util import (
+    EPS64,
+    tf_explinear_eps_inv,
+    tf_explinear_eps,
+    tf_identity,
+)
 import torch
 import numpy as np
 import qmcpy as qmcpy
@@ -67,15 +73,15 @@ class FastGPDigitalNetB2(AbstractFastGP):
         torch.Size([128])
 
         >>> fgp.post_cubature_mean()
-        tensor(20.1888)
+        tensor(20.1889)
         >>> fgp.post_cubature_var()
         tensor(0.0002)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1557)
+        tensor(20.1559)
         >>> pcci_high
-        tensor(20.2220)
+        tensor(20.2219)
         
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
         >>> pvar_future = fgp.post_var(x,n=2*n)
@@ -103,7 +109,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0194)
+        tensor(0.0202)
 
         >>> pcov_16n = fgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = fgp.post_var(x,n=16*n)
@@ -124,16 +130,16 @@ class FastGPDigitalNetB2(AbstractFastGP):
             alpha:int = 2,
             scale:float = 1., 
             lengthscales:Union[torch.Tensor,float] = 1., 
-            noise:float = 1e-16,
+            noise:float = 2*EPS64,
             factor_task_kernel:Union[torch.Tensor,int] = 1.,
             rank_factor_task_kernel:int = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
             device:torch.device = "cpu",
-            tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
-            tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x, lambda x: x)),#((lambda x: x**(1/3)),(lambda x: x**3)),
-            tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_scale:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_lengthscales:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_noise:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_factor_task_kernel:Tuple[callable,callable] = (tf_identity,tf_identity),
+            tfs_noise_task_kernel:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 

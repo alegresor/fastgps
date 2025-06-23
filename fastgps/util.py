@@ -5,6 +5,21 @@ import qmcpy as qp
 
 EPS64 = torch.finfo(torch.float64).eps
 
+def tf_explinear(x):
+    return -torch.nn.functional.logsigmoid(-x)
+
+def tf_explinear_inv(x):
+    return torch.where(x<34,torch.log(torch.expm1(x)),x)
+
+def tf_explinear_eps(x):
+    return tf_explinear(x)+EPS64
+
+def tf_explinear_eps_inv(x):
+    return tf_explinear_inv(x-EPS64)
+
+def tf_identity(x):
+    return x 
+
 class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution):
     def __init__(self, x):
         assert isinstance(x,np.ndarray)
