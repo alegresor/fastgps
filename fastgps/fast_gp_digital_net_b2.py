@@ -224,6 +224,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         assert (ts==ts[0]).all(), "all seqs should have the same t"
         self.t = ts[0].item()
         ift = ft = torch.compile(qmcpy.fwht_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fwht_torch
+        self.kernel_class = "dsi"
         super().__init__(
             alpha,
             ft,

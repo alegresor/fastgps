@@ -2,6 +2,7 @@ from .abstract_gp import AbstractGP
 from .util import (
     DummyDiscreteDistrib,
     _StandardInverseLogDetCache,
+    EPS64
 )
 import torch
 import numpy as np
@@ -133,23 +134,27 @@ class StandardGP(AbstractGP):
             factor_task_kernel:Union[torch.Tensor,int] = 1.,
             rank_factor_task_kernel:int = None,
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
+            rq_param:float = 1.,
             device:torch.device = "cpu",
             tfs_scale:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_lengthscales:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_noise:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             tfs_factor_task_kernel:Tuple[callable,callable] = ((lambda x: x, lambda x: x)),#((lambda x: x**(1/3)),(lambda x: x**3)),
             tfs_noise_task_kernel:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
+            tfs_rq_param:Tuple[callable,callable] = ((lambda x: torch.log(x)),(lambda x: torch.exp(x))),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
             requires_grad_factor_task_kernel:bool = None,
             requires_grad_noise_task_kernel:bool = None,
+            requires_grad_rq_param:bool = True,
             shape_batch:torch.Size = torch.Size([]),
             shape_scale:torch.Size = torch.Size([1]), 
             shape_lengthscales:torch.Size = None,
             shape_noise:torch.Size = torch.Size([1]),
             shape_factor_task_kernel:torch.Size = None, 
             shape_noise_task_kernel:torch.Size = None,
+            shape_rq_param:torch.Size = torch.Size([1]),
             derivatives:list = None,
             derivatives_coeffs:list = None,
             kernel_class:str = "Gaussian",
@@ -175,23 +180,27 @@ class StandardGP(AbstractGP):
                 where `rank_factor_task_kernel<=num_tasks` and $\\boldsymbol{v}$ is the `noise_task_kernel`.
             rank_factor_task_kernel (int): see the description of `factor_task_kernel` above. Defaults to 0 for single task problems and 1 for multi task problems.
             noise_task_kernel (Union[torch.Tensor[num_tasks],float]): see the description of `factor_task_kernel` above 
+            rq_param (float): scale mixture parameter for the rational quadratic kernel
             device (torch.device): torch device which is required to support `torch.float64`
             tfs_scale (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_lengthscales (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_factor_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             tfs_noise_task_kernel (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
+            tfs_rq_param (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_scale (bool): wheather or not to optimize the scale parameter
             requires_grad_lengthscales (bool): wheather or not to optimize lengthscale parameters
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
             requires_grad_factor_task_kernel (bool): wheather or not to optimize the factor for the task kernel
             requires_grad_noise_task_kernel (bool): wheather or not to optimize the noise for the task kernel
+            requires_grad_rq_param (bool): wheather or not to optimize the mixture parameter for the rational quadratic kernel
             shape_batch (torch.Size): shape of the batch output for each task
             shape_scale (torch.Size): shape of the scale parameter, defaults to `torch.Size([1])`
             shape_lengthscales (torch.Size): shape of the lengthscales parameter, defaults to `torch.Size([d])` where `d` is the dimension
             shape_noise (torch.Size): shape of the noise parameter, defaults to `torch.Size([1])`
             shape_factor_task_kernel (torch.Size): shape of the factor for the task kernel, defaults to `torch.Size([num_tasks,r])` where `r` is the rank, see the description of `factor_task_kernel`
             shape_noise_task_kernel (torch.Size): shape of the noise for the task kernel, defaults to `torch.Size([num_tasks])`
+            shape_rq_param (torch.Size): shape of the mixture parameter for the rational quadratic kernel `torch.Size([1])`
             derivatives (list): list of derivative orders e.g. to include a function and its gradient set 
                 ```python
                 derivatives = [torch.zeros(d,dtype=int)]+[ej for ej in torch.eye(d,dtype=int)]
@@ -228,7 +237,7 @@ class StandardGP(AbstractGP):
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         kernel_class = kernel_class.lower()
-        self.available_kernel_classes = ['gaussian','matern12','matern32','matern52']
+        self.available_kernel_classes = ['gaussian','matern12','matern32','matern52','rq']
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         assert isinstance(compile_dist_func,bool)
@@ -236,7 +245,7 @@ class StandardGP(AbstractGP):
             self.unscaled_gaussian_kernel = lambda x1,x2,lengthscales: torch.exp(-((x1-x2)**2/(2*lengthscales)).sum(-1))
             if compile_dist_func:
                 self.unscaled_gaussian_kernel = torch.compile(self.unscaled_gaussian_kernel,**compile_dist_func_kwargs)
-        elif "matern" in self.kernel_class:
+        elif "matern" in self.kernel_class or "rq" in self.kernel_class:
             self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/torch.sqrt(2*lengthscales),ord=2,dim=-1)
             if compile_dist_func:
                 self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
@@ -274,6 +283,25 @@ class StandardGP(AbstractGP):
         )
         if data is not None:
             self.add_y_next(data["y"],task=torch.arange(self.num_tasks))
+        if self.kernel_class=="rq":
+            # rq param
+            assert np.isscalar(rq_param) or isinstance(rq_param,torch.Tensor), "rq_param must be a scalar or torch.Tensor"
+            if isinstance(rq_param,torch.Tensor): shape_rq_param = rq_param.shape
+            if isinstance(shape_rq_param,(list,tuple)): shape_rq_param = torch.Size(shape_rq_param)
+            assert isinstance(shape_rq_param,torch.Size) and shape_rq_param[-1]==1
+            if len(shape_rq_param)>1: assert shape_rq_param[:-1]==shape_batch[-(len(shape_rq_param)-1):]
+            if np.isscalar(rq_param): rq_param = rq_param*torch.ones(shape_rq_param,device=self.device)
+            assert (rq_param>0).all(), "rq_param must be positive"
+            assert len(tfs_rq_param)==2 and callable(tfs_rq_param[0]) and callable(tfs_rq_param[1]), "tfs_rq_param should be a tuple of two callables, the transform and inverse transform"
+            self.tf_rq_param = tfs_rq_param[1]
+            self.raw_rq_param = torch.nn.Parameter(tfs_rq_param[0](rq_param),requires_grad=requires_grad_rq_param)
+    @property
+    def rq_param(self):
+        """
+        Kernel lengthscale parameter.
+        """
+        assert self.kernel_class=="rq", "rq_param only available for the rational quadratic (RQ) kernel class"
+        return self.tf_rq_param(self.raw_rq_param)
     def get_default_optimizer(self, lr):
         # if lr is None: lr = 1e-1
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
@@ -321,6 +349,10 @@ class StandardGP(AbstractGP):
         elif self.kernel_class=="matern52":
             dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
+        elif self.kernel_class=="rq":
+            rq_param = self.rq_param.reshape(list(self.rq_param.shape)[:-1]+[1]*(ndim-1))
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
+            y_base = scale*(1+dists**2/rq_param)**(-rq_param)
         else:
             raise Exception("kernel_class must be in %s"%str(self.available_kernel_classes))
         for i0 in range(len(c0)):

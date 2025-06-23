@@ -162,6 +162,7 @@ class AbstractGP(torch.nn.Module):
         store_lengthscales_hist:bool = False,
         store_noise_hist:bool = False,
         store_task_kernel_hist:bool = False,
+        store_rq_param_hist:bool = False,
         verbose:int = 5,
         verbose_indent:int = 4,
         masks:torch.Tensor = None,
@@ -181,6 +182,7 @@ class AbstractGP(torch.nn.Module):
             store_lengthscales_hist (bool): if `True`, store and return iteration data for the kernel lengthscale parameters
             store_noise_hist (bool): if `True`, store and return iteration data for noise
             store_task_kernel_hist (bool): if `True`, store and return iteration data for the task kernel
+            store_rq_param_hist (bool):  if `True`, store and return iteration data for the rational quadratic parameter
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
             masks (torch.Tensor): only optimize outputs corresponding to `y[...,*masks]`
@@ -204,6 +206,7 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(store_lengthscales_hist,bool), "require bool store_lengthscales_hist" 
         assert isinstance(store_noise_hist,bool), "require bool store_noise_hist"
         assert isinstance(store_task_kernel_hist,bool), "require bool store_task_kernel_hist"
+        assert isinstance(store_rq_param_hist,bool), "require bool store_rq_param_hist"
         assert (isinstance(verbose,int) or isinstance(verbose,bool)) and verbose>=0, "require verbose is a non-negative int"
         assert isinstance(verbose_indent,int) and verbose_indent>=0, "require verbose_indent is a non-negative int"
         assert np.isscalar(stop_crit_improvement_threshold) and 0<stop_crit_improvement_threshold, "require stop_crit_improvement_threshold is a positive float"
@@ -216,11 +219,13 @@ class AbstractGP(torch.nn.Module):
         store_lengthscales_hist = store_hists or (store_lengthscales_hist and self.raw_lengthscales.requires_grad)
         store_noise_hist = store_hists or (store_noise_hist and self.raw_noise.requires_grad)
         store_task_kernel_hist = store_hists or (store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad))
+        store_rq_param_hist = self.kernel_class=="rq" and (store_hists or (store_rq_param_hist and self.raw_rq_param.requires_grad))
         if store_loss_hist: loss_hist = torch.empty(iterations+1)
         if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
         if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
         if store_task_kernel_hist: task_kernel_hist = torch.empty(torch.Size([iterations+1])+self.gram_matrix_tasks.shape)
+        if store_rq_param_hist: rq_param_hist = torch.empty(torch.Size([iterations+1])+self.rq_param.shape)
         if masks is not None:
             masks = torch.atleast_2d(masks)
             assert masks.ndim==2
@@ -287,6 +292,7 @@ class AbstractGP(torch.nn.Module):
             if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
+            if store_rq_param_hist: rq_param_hist[i] = self.rq_param.detach().to(rq_param_hist.device)
             if verbose and (i%verbose==0 or break_condition):
                 _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
                 print(" "*verbose_indent+_s)
@@ -303,6 +309,7 @@ class AbstractGP(torch.nn.Module):
         if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist[:(i+1)]
         if store_noise_hist: data["noise_hist"] = noise_hist[:(i+1)]
         if store_task_kernel_hist: data["task_kernel_hist"] = task_kernel_hist[:(i+1)]
+        if store_rq_param_hist: data["rq_param_hist"] = rq_param_hist[:(i+1)]
         return data
     def _sample(self, seq, n_min, n_max):
         x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(self.device)

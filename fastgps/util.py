@@ -3,6 +3,8 @@ import os
 import numpy as np 
 import qmcpy as qp 
 
+EPS64 = torch.finfo(torch.float64).eps
+
 class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution):
     def __init__(self, x):
         assert isinstance(x,np.ndarray)
