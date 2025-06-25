@@ -243,7 +243,7 @@ class StandardGP(AbstractGP):
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         assert isinstance(compile_dist_func,bool)
-        self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/(torch.sqrt(2*lengthscales)),ord=2,dim=-1)
+        self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/(np.sqrt(2)*lengthscales),ord=2,dim=-1)
         if compile_dist_func:
             self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
         super().__init__(
@@ -371,9 +371,9 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
-        norms = [torch.distributions.Normal(self.get_x(l),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l),self.lengthscales[...,None,:]) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kint_parts = [self.scale*(np.sqrt(2*np.pi)*self.lengthscales[...,None,:]*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         pcmean = (kints*coeffs[...,None,:]).sum(-1)
         if eval:
@@ -396,13 +396,13 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
-        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),self.lengthscales[...,None,:]) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kint_parts = [self.scale*(np.sqrt(2*np.pi)*self.lengthscales[...,None,:]*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints = torch.cat([kmat_tasks[...,task,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         v = torch.einsum("...ij,...j->...i",thetainv[...,None,:,:],kints)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
-        t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
+        t = 2*(-1+torch.exp(-1/(2*l_d**2)))*l_d**2+np.sqrt(2*np.pi)*l_d*torch.erf(1/(np.sqrt(2)*l_d))
         tval = self.scale*kmat_tasks[...,task,task]*t.prod(-1)[...,None]
         pcvar = tval-(kints*v).sum(-1)
         pcvar[pcvar<0] = 0.
@@ -432,14 +432,14 @@ class StandardGP(AbstractGP):
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         assert self.kernel_class=="gaussian", "so far, we have only worked out integrals for the Gaussian kernel"
         equal = torch.equal(task0,task1)
-        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),torch.sqrt(self.lengthscales[...,None,:])) for l in range(self.num_tasks)]
+        norms = [torch.distributions.Normal(self.get_x(l,n=n[l]),self.lengthscales[...,None,:]) for l in range(self.num_tasks)]
         lb,ub = (torch.tensor([0],device=self.device),torch.tensor([1],device=self.device)) if integrate_unit_cube else (torch.tensor([-torch.inf],device=self.device),torch.tensor([torch.inf],device=self.device))
-        kint_parts = [self.scale*(torch.sqrt(2*torch.pi*self.lengthscales[...,None,:])*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
+        kint_parts = [self.scale*(np.sqrt(2*np.pi)*self.lengthscales[...,None,:]*(norms[l].cdf(ub)-norms[l].cdf(lb))).prod(-1) for l in range(self.num_tasks)]
         kints0 = torch.cat([kmat_tasks[...,task0,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         kints1 = torch.cat([kmat_tasks[...,task1,l,None]*kint_parts[l][...,None,:] for l in range(self.num_tasks)],dim=-1)
         v = torch.einsum("...ij,...j->...i",thetainv[...,None,:,:],kints1)
         l_d = self.lengthscales+torch.zeros(self.d,device=self.device)
-        t = 2*(-1+torch.exp(-1/(2*l_d)))*l_d+torch.sqrt(2*np.pi*l_d)*torch.erf(1/torch.sqrt(2*l_d))
+        t = 2*(-1+torch.exp(-1/(2*l_d**2)))*l_d**2+np.sqrt(2*np.pi)*l_d*torch.erf(1/(np.sqrt(2)*l_d))
         tval = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]*t.prod(-1)[...,None,None]
         pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)
         if equal:
