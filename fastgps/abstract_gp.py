@@ -149,6 +149,10 @@ class AbstractGP(torch.nn.Module):
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
         self.adaptive_nugget = adaptive_nugget
+    def get_default_optimizer(self, lr):
+        # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
+        if lr is None: lr = 1e-1
+        return torch.optim.Rprop(self.parameters(),lr=lr,etas=(0.5,1.2),step_sizes=(0,10))
     def fit(self,
         loss_metric:str = "MLL",
         iterations:int = 5000,

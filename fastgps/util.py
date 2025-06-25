@@ -5,6 +5,30 @@ import qmcpy as qp
 
 EPS64 = torch.finfo(torch.float64).eps
 
+def tf_exp(x):
+    return torch.exp(x) 
+
+def tf_exp_inv(x):
+    return torch.log(x) 
+
+def tf_exp_eps(x):
+    return tf_exp(x)+EPS64 
+
+def tf_exp_eps_inv(x):
+    return tf_exp_inv(x-EPS64) 
+
+def tf_square(x):
+    return x**2 
+
+def tf_square_inv(x):
+    return torch.sqrt(x) 
+
+def tf_square_eps(x):
+    return tf_square(x)+EPS64 
+
+def tf_square_eps_inv(x):
+    return tf_square_inv(x-EPS64)
+
 def tf_explinear(x):
     return -torch.nn.functional.logsigmoid(-x)
 

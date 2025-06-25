@@ -50,11 +50,6 @@ class AbstractFastGP(AbstractGP):
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two"
         return super().post_cov(x0=x0,x1=x1,task0=task0,task1=task1,n=n_og,eval=eval)
-    def get_default_optimizer(self, lr):
-        # if lr is None: lr = 1e-1
-        # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
-        if lr is None: lr = 1e0
-        return torch.optim.Rprop(self.parameters(),lr=lr,etas=(0.5,1.2),step_sizes=(0,10))
     def get_inv_log_det_cache(self, n=None):
         if n is None: n = self.n
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()

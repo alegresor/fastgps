@@ -2,8 +2,8 @@ from .abstract_gp import AbstractGP
 from .util import (
     DummyDiscreteDistrib,
     _StandardInverseLogDetCache,
-    tf_explinear_eps_inv,
-    tf_explinear_eps,
+    tf_exp_eps,
+    tf_exp_eps_inv,
     tf_identity,
 )
 import torch
@@ -53,7 +53,7 @@ class StandardGP(AbstractGP):
         ['iterations']
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0833)
+        tensor(0.0822)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -76,15 +76,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.0121)
+        tensor(20.0282)
         >>> sgp.post_cubature_var()
-        tensor(0.0064)
+        tensor(0.0082)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.8064)
+        tensor(19.7948)
         >>> pcci_high
-        tensor(20.2179)
+        tensor(20.2616)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -94,7 +94,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1106)
+        tensor(0.1161)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
@@ -108,7 +108,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1003)
+        tensor(0.0990)
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
@@ -138,12 +138,12 @@ class StandardGP(AbstractGP):
             noise_task_kernel:Union[torch.Tensor,float] = 1.,
             rq_param:float = 1.,
             device:torch.device = "cpu",
-            tfs_scale:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
-            tfs_lengthscales:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
-            tfs_noise:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_scale:Tuple[callable,callable] = (tf_exp_eps_inv,tf_exp_eps),
+            tfs_lengthscales:Tuple[callable,callable] = (tf_exp_eps_inv,tf_exp_eps),
+            tfs_noise:Tuple[callable,callable] = (tf_exp_eps_inv,tf_exp_eps),
             tfs_factor_task_kernel:Tuple[callable,callable] = (tf_identity,tf_identity),
-            tfs_noise_task_kernel:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
-            tfs_rq_param:Tuple[callable,callable] = (tf_explinear_eps_inv,tf_explinear_eps),
+            tfs_noise_task_kernel:Tuple[callable,callable] = (tf_exp_eps_inv,tf_exp_eps),
+            tfs_rq_param:Tuple[callable,callable] = (tf_exp_eps_inv,tf_exp_eps),
             requires_grad_scale:bool = True, 
             requires_grad_lengthscales:bool = True, 
             requires_grad_noise:bool = False, 
@@ -243,14 +243,9 @@ class StandardGP(AbstractGP):
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         assert isinstance(compile_dist_func,bool)
-        if self.kernel_class=="gaussian":
-            self.unscaled_gaussian_kernel = lambda x1,x2,lengthscales: torch.exp(-((x1-x2)**2/(2*lengthscales)).sum(-1))
-            if compile_dist_func:
-                self.unscaled_gaussian_kernel = torch.compile(self.unscaled_gaussian_kernel,**compile_dist_func_kwargs)
-        elif "matern" in self.kernel_class or "rq" in self.kernel_class:
-            self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/torch.sqrt(2*lengthscales),ord=2,dim=-1)
-            if compile_dist_func:
-                self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
+        self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/(torch.sqrt(2*lengthscales)),ord=2,dim=-1)
+        if compile_dist_func:
+            self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
         super().__init__(
             seqs,
             num_tasks,
@@ -304,11 +299,6 @@ class StandardGP(AbstractGP):
         """
         assert self.kernel_class=="rq", "rq_param only available for the rational quadratic (RQ) kernel class"
         return self.tf_rq_param(self.raw_rq_param)
-    def get_default_optimizer(self, lr):
-        # if lr is None: lr = 1e-1
-        # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
-        if lr is None: lr = 1e0
-        return torch.optim.Rprop(self.parameters(),lr=lr,etas=(0.5,1.2),step_sizes=(0,10))
     def get_inv_log_det_cache(self, n=None):
         if n is None: n = self.n
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
@@ -340,20 +330,17 @@ class StandardGP(AbstractGP):
         ndim = xg.ndim
         lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
         scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
+        dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
         if self.kernel_class=="gaussian":
-            y_base = scale*self.unscaled_gaussian_kernel(xg,zg,lengthscales)
+            y_base = scale*torch.exp(-dists**2)
         elif self.kernel_class=="matern12":
-            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*torch.exp(-dists)
         elif self.kernel_class=="matern32":
-            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*(1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
         elif self.kernel_class=="matern52":
-            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
         elif self.kernel_class=="rq":
             rq_param = self.rq_param.reshape(list(self.rq_param.shape)[:-1]+[1]*(ndim-1))
-            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*(1+dists**2/rq_param)**(-rq_param)
         else:
             raise Exception("kernel_class must be in %s"%str(self.available_kernel_classes))
