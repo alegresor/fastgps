@@ -71,6 +71,7 @@ class AbstractGP(torch.nn.Module):
         assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(self.derivatives[i]) for i in range(self.num_tasks))
         self.derivatives_coeffs = derivatives_coeffs
         # shape_batch 
+        if isinstance(shape_batch,int): shape_batch = torch.Size([shape_batch])
         if isinstance(shape_batch,(list,tuple)): shape_batch = torch.Size(shape_batch)
         assert isinstance(shape_batch,torch.Size)
         self.shape_batch = shape_batch
@@ -356,7 +357,7 @@ class AbstractGP(torch.nn.Module):
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
-        self.m = torch.where(self.n==0,-1,torch.log2(self.n)).to(int)
+        self.m = torch.where(self.n==0,-1,torch.log2(self.n).round()).to(int) # round to avoid things like torch.log2(torch.tensor([2**3],dtype=torch.int64,device="cuda")).item() = 2.9999999999999996
         for key in list(self.inv_log_det_cache_dict.keys()):
             if (torch.tensor(key)<self.n.cpu()).any():
                 del self.inv_log_det_cache_dict[key]
