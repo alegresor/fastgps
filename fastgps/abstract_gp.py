@@ -385,7 +385,6 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat = torch.cat([torch.cat([kmat_tasks[...,task[l0],l1,None,None]*self._kernel(x[:,None,:],self.get_xb(l1)[None,:,:],self.derivatives[task[l0]],self.derivatives[l1],self.derivatives_coeffs[task[l0]],self.derivatives_coeffs[l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        #pmean = (kmat*coeffs[...,None,None,:]).sum(-1)
         pmean = torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)

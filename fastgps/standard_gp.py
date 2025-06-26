@@ -243,9 +243,14 @@ class StandardGP(AbstractGP):
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         assert isinstance(compile_dist_func,bool)
-        self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/(np.sqrt(2)*lengthscales),ord=2,dim=-1)
-        if compile_dist_func:
-            self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
+        if self.kernel_class=="gaussian":
+            self.gaussian_kernel = lambda x1,x2,lengthscales: torch.exp(((x1-x2)/(np.sqrt(2)*lengthscales))**2).prod(-1)
+            if compile_dist_func:
+                self.gaussian_kernel = torch.compile(self.gaussian_kernel,**compile_dist_func_kwargs)
+        else:
+            self.pairwise_rel_dist_func = lambda x1,x2,lengthscales: torch.linalg.norm((x1-x2)/(np.sqrt(2)*lengthscales),ord=2,dim=-1)
+            if compile_dist_func:
+                self.pairwise_rel_dist_func = torch.compile(self.pairwise_rel_dist_func,**compile_dist_func_kwargs)
         super().__init__(
             seqs,
             num_tasks,
@@ -330,16 +335,19 @@ class StandardGP(AbstractGP):
         ndim = xg.ndim
         lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
         scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
-        dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
         if self.kernel_class=="gaussian":
-            y_base = scale*torch.exp(-dists**2)
+            y_base = self.gaussian_kernel(xg,zg,lengthscales)
         elif self.kernel_class=="matern12":
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*torch.exp(-dists)
         elif self.kernel_class=="matern32":
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*(1+np.sqrt(3)*dists)*torch.exp(-np.sqrt(3)*dists)
         elif self.kernel_class=="matern52":
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*((1+np.sqrt(5)*dists+5*dists**2/3)*torch.exp(-np.sqrt(5)*dists))
         elif self.kernel_class=="rq":
+            dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             rq_param = self.rq_param.reshape(list(self.rq_param.shape)[:-1]+[1]*(ndim-1))
             y_base = scale*(1+dists**2/rq_param)**(-rq_param)
         else:
