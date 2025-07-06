@@ -239,7 +239,9 @@ class AbstractGP(torch.nn.Module):
         store_noise_hist = store_hists or (store_noise_hist and self.raw_noise.requires_grad)
         store_task_kernel_hist = store_hists or (store_task_kernel_hist and (self.raw_factor_task_kernel.requires_grad or self.raw_noise_task_kernel.requires_grad))
         store_rq_param_hist = self.kernel_class=="rq" and (store_hists or (store_rq_param_hist and self.raw_rq_param.requires_grad))
-        if store_loss_hist: loss_hist = torch.empty(iterations+1)
+        if store_loss_hist:
+            loss_hist = torch.empty(iterations+1)
+            best_loss_hist = torch.empty(iterations+1)
         if store_scale_hist: scale_hist = torch.empty(torch.Size([iterations+1])+self.raw_scale.shape)
         if store_lengthscales_hist: lengthscales_hist = torch.empty(torch.Size([iterations+1])+self.raw_lengthscales.shape)
         if store_noise_hist: noise_hist = torch.empty(torch.Size([iterations+1])+self.raw_noise.shape)
@@ -272,7 +274,6 @@ class AbstractGP(torch.nn.Module):
                     term1 = numer[...,masks,:]
                     term2 = denom.expand(list(self.shape_batch)+[1])[...,masks,:]
                 loss = (term1/term2).sum()
-                metric_val = loss
             elif loss_metric=="MLL":
                 norm_term,logdet = inv_log_det_cache.get_norm_term_logdet_term()
                 if masks is None:
@@ -282,7 +283,6 @@ class AbstractGP(torch.nn.Module):
                     term1 = norm_term[...,masks,0].sum()
                     term2 = logdet.expand(list(self.shape_batch)+[1])[...,masks,0].sum()
                 loss = 1/2*(term1+term2+mll_const)
-                metric_val = -loss
             elif loss_metric=="CV":
                 coeffs = self.coeffs
                 del os.environ["FASTGP_FORCE_RECOMPILE"]
@@ -294,7 +294,6 @@ class AbstractGP(torch.nn.Module):
                     loss = squared_sums.sum()
                 else:
                     loss = squared_sums[...,masks,0].sum()
-                metric_val = loss
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -306,7 +305,9 @@ class AbstractGP(torch.nn.Module):
             else:
                 stop_crit_iterations_without_improvement_loss += 1
             break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations
-            if store_loss_hist: loss_hist[i] = metric_val.item()
+            if store_loss_hist:
+                loss_hist[i] = loss.item()
+                best_loss_hist[i] = stop_crit_best_loss
             if store_scale_hist: scale_hist[i] = self.scale.detach().to(scale_hist.device)
             if store_lengthscales_hist: lengthscales_hist[i] = self.lengthscales.detach().to(lengthscales_hist.device)
             if store_noise_hist: noise_hist[i] = self.noise.detach().to(noise_hist.device)
@@ -323,7 +324,9 @@ class AbstractGP(torch.nn.Module):
             setattr(self,pname,torch.nn.Parameter(pdata,requires_grad=getattr(self,pname).requires_grad))
         del os.environ["FASTGP_FORCE_RECOMPILE"]
         data = {"iterations":i}
-        if store_loss_hist: data["loss_hist"] = loss_hist[:(i+1)]
+        if store_loss_hist:
+            data["loss_hist"] = loss_hist[:(i+1)]
+            data["best_loss_hist"] = best_loss_hist[:(i+1)]
         if store_scale_hist: data["scale_hist"] = scale_hist[:(i+1)]
         if store_lengthscales_hist: data["lengthscales_hist"] = lengthscales_hist[:(i+1)]
         if store_noise_hist: data["noise_hist"] = noise_hist[:(i+1)]
