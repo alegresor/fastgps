@@ -239,7 +239,7 @@ class AbstractGP(torch.nn.Module):
         else:
             d_out = int(torch.tensor(self.shape_batch).prod())
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"loss","term1","term2")
+            _s = "%16s | %-10s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"best loss","loss","term1","term2")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         mll_const = d_out*self.n.sum()*np.log(2*np.pi)
@@ -299,7 +299,7 @@ class AbstractGP(torch.nn.Module):
             if store_task_kernel_hist: task_kernel_hist[i] = self.gram_matrix_tasks.detach().to(task_kernel_hist.device)
             if store_rq_param_hist: rq_param_hist[i] = self.rq_param.detach().to(rq_param_hist.device)
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e"%(i,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
+                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
                 print(" "*verbose_indent+_s)
             if break_condition: break
             loss.backward()
