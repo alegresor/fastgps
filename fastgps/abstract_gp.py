@@ -150,6 +150,20 @@ class AbstractGP(torch.nn.Module):
             self.raw_factor_task_kernel.requires_grad_(False)
             assert (self.gram_matrix_tasks==1).all()
         self.adaptive_nugget = adaptive_nugget
+    def save_params(self, path):
+        """ Save the state dict to path 
+        
+        Arg:
+            path (str): the path. 
+        """
+        torch.save(self.state_dict(),path)
+    def load_params(self, path):
+        """ Load the state dict from path 
+        
+        Arg:
+            path (str): the path. 
+        """
+        self.load_state_dict(torch.load(path,weights_only=True))
     def get_default_optimizer(self, lr):
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
         if lr is None: lr = 1e-1
