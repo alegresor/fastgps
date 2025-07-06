@@ -164,6 +164,7 @@ class StandardGP(AbstractGP):
             data:dict = None,
             compile_dist_func:bool = False,
             compile_dist_func_kwargs:dict = {},
+            gaussian_kernel_use_dist_func:bool = True,
             ):
         """
         Args:
@@ -212,6 +213,7 @@ class StandardGP(AbstractGP):
             data (dict): dictory of data with keys 'x' and 'y' where data['x'] and data['y'] are both `torch.Tensor`s or list of `torch.Tensor`s with lengths equal to the number of tasks
             compile_dist_func (bool): if `True`, use compile the pairwise distance function for memory efficiency when evaluating the kernel matrix.
             compile_dist_func_kwargs (dict): keyword arguments to `torch.compile` used when `compile_dist_func=True`.
+            gaussian_kernel_use_dist_func (bool): if `True`, use the distance function to compute the Gaussian kernel, otherwise use the product of exponentials
         """
         if num_tasks is None: 
             solo_task = True
@@ -243,7 +245,9 @@ class StandardGP(AbstractGP):
         assert kernel_class in self.available_kernel_classes, "kernel_class must in %s"%str(self.available_kernel_classes)
         self.kernel_class = kernel_class
         assert isinstance(compile_dist_func,bool)
-        if self.kernel_class=="gaussian":
+        assert isinstance(gaussian_kernel_use_dist_func,bool)
+        self.gaussian_kernel_use_dist_func = gaussian_kernel_use_dist_func
+        if self.kernel_class=="gaussian" and (not self.gaussian_kernel_use_dist_func):
             self.gaussian_kernel = lambda x1,x2,lengthscales: torch.exp(-((x1-x2)/(np.sqrt(2)*lengthscales))**2).prod(-1)
             if compile_dist_func:
                 self.gaussian_kernel = torch.compile(self.gaussian_kernel,**compile_dist_func_kwargs)
@@ -297,6 +301,8 @@ class StandardGP(AbstractGP):
             assert len(tfs_rq_param)==2 and callable(tfs_rq_param[0]) and callable(tfs_rq_param[1]), "tfs_rq_param should be a tuple of two callables, the transform and inverse transform"
             self.tf_rq_param = tfs_rq_param[1]
             self.raw_rq_param = torch.nn.Parameter(tfs_rq_param[0](rq_param),requires_grad=requires_grad_rq_param)
+        if self.kernel_class=="gaussian" and self.gaussian_kernel_use_dist_func:
+            assert all((deriv==0).all() for deriv in self.derivatives), "set gaussian_kernel_use_dist_func=False when using derivatives"
     @property
     def rq_param(self):
         """
@@ -336,7 +342,11 @@ class StandardGP(AbstractGP):
         lengthscales = self.lengthscales.reshape(list(self.lengthscales.shape)[:-1]+[1]*(ndim-1)+[self.lengthscales.size(-1)])
         scale = self.scale.reshape(list(self.scale.shape)[:-1]+[1]*(ndim-1))
         if self.kernel_class=="gaussian":
-            y_base = scale*self.gaussian_kernel(xg,zg,lengthscales)
+            if self.gaussian_kernel_use_dist_func:
+                dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
+                y_base = scale*torch.exp(-dists**2)
+            else:
+                y_base = scale*self.gaussian_kernel(xg,zg,lengthscales)
         elif self.kernel_class=="matern12":
             dists = self.pairwise_rel_dist_func(xg,zg,lengthscales)
             y_base = scale*torch.exp(-dists)
