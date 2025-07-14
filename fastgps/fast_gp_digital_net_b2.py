@@ -160,12 +160,12 @@ class FastGPDigitalNetB2(AbstractFastGP):
         """
         Args:
             seqs (Union[int,qmcpy.DigitalNetB2,List]]): list of digital sequence generators in base $b=2$ 
-                with order="NATURAL" and randomize in `["FALSE","DS"]`. If an int `d` is passed in we use 
+                with order="RADICAL INVERSE" and randomize in `["FALSE","DS"]`. If an int `d` is passed in we use 
                 ```python
                 [qmcpy.DigitalNetB2(d,seed=seed,randomize="DS") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info. 
-                If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS_DS"]`. 
+                If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS DS"]`. 
             num_tasks (int): number of tasks 
             seed_for_seq (int): seed used for digital net randomization
             alpha (int): smoothness parameter
@@ -219,10 +219,10 @@ class FastGPDigitalNetB2(AbstractFastGP):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
         assert all(isinstance(seqs[i],qmcpy.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qmcpy.DigitalNetB2 instances"
-        assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
+        assert all(seqs[i].order=="RADICAL INVERSE" for i in range(num_tasks)), "each seq should be in 'RADICAL INVERSE' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         if num_tasks==1:
-            assert seqs[0].randomize in ['FALSE','DS','LMS','LMS_DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS_DS']"
+            assert seqs[0].randomize in ['FALSE','DS','LMS','LMS DS'], "seq should have randomize in ['FALSE','DS','LMS','LMS DS']"
         else:
             assert all(seqs[i].randomize in ['FALSE','DS'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','DS']"
         ts = torch.tensor([seqs[i].t for i in range(num_tasks)])

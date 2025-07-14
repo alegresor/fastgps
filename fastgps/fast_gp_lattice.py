@@ -165,7 +165,7 @@ class FastGPLattice(AbstractFastGP):
         """
         Args:
             seqs ([int,qmcpy.Lattice,List]): list of lattice sequence generators
-                with order="NATURAL" and randomize in `["FALSE","SHIFT"]`. If an int `d` is passed in we use 
+                with order="RADICAL INVERSE" and randomize in `["FALSE","SHIFT"]`. If an int `d` is passed in we use 
                 ```python
                 [qmcpy.Lattice(d,seed=seed,randomize="SHIFT") for seed in np.random.SeedSequence(seed_for_seq).spawn(num_tasks)]
                 ```
@@ -224,7 +224,7 @@ class FastGPLattice(AbstractFastGP):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
         assert all(isinstance(seqs[i],qmcpy.Lattice) for i in range(num_tasks)), "each seq should be a qmcpy.Lattice instances"
-        assert all(seqs[i].order=="NATURAL" for i in range(num_tasks)), "each seq should be in 'NATURAL' order "
+        assert all(seqs[i].order=="RADICAL INVERSE" for i in range(num_tasks)), "each seq should be in 'RADICAL INVERSE' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         assert all(seqs[i].randomize in ['FALSE','SHIFT'] for i in range(num_tasks)), "each seq should have randomize in ['FALSE','SHIFT']"
         ft = torch.compile(qmcpy.fftbr_torch,**compile_fts_kwargs) if compile_fts else qmcpy.fftbr_torch
