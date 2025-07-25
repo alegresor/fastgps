@@ -3,46 +3,6 @@ import os
 import numpy as np 
 import qmcpy as qp 
 
-EPS64 = torch.finfo(torch.float64).eps
-
-def tf_exp(x):
-    return torch.exp(x) 
-
-def tf_exp_inv(x):
-    return torch.log(x) 
-
-def tf_exp_eps(x):
-    return tf_exp(x)+EPS64 
-
-def tf_exp_eps_inv(x):
-    return tf_exp_inv(x-EPS64) 
-
-def tf_square(x):
-    return x**2 
-
-def tf_square_inv(x):
-    return torch.sqrt(x) 
-
-def tf_square_eps(x):
-    return tf_square(x)+EPS64 
-
-def tf_square_eps_inv(x):
-    return tf_square_inv(x-EPS64)
-
-def tf_explinear(x):
-    return -torch.nn.functional.logsigmoid(-x)
-
-def tf_explinear_inv(x):
-    return torch.where(x<34,torch.log(torch.expm1(x)),x)
-
-def tf_explinear_eps(x):
-    return tf_explinear(x)+EPS64
-
-def tf_explinear_eps_inv(x):
-    return tf_explinear_inv(x-EPS64)
-
-def tf_identity(x):
-    return x 
 
 class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution):
     def __init__(self, x):
@@ -85,9 +45,10 @@ class _K1PartsSeq(object):
         self.xxb_seq_first = xxb_seq_first
         self.xxb_seq_second = xxb_seq_second
         assert beta.ndim==2 and beta.size(-1)==self.fgp.d and kappa.ndim==2 and kappa.size(-1)==self.fgp.d
+        assert beta.shape==kappa.shape
         self.beta = beta 
         self.kappa = kappa
-        self.k1parts = torch.empty((0,len(self.beta),len(self.kappa),self.fgp.d),device=self.fgp.device)
+        self.k1parts = torch.empty((0,len(self.kappa),self.fgp.d),device=self.fgp.device)
         self.n = 0
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None)
@@ -98,20 +59,19 @@ class _K1PartsSeq(object):
         if i.stop>self.n:
             _,xb_next = self.xxb_seq_first[self.n:i.stop]
             _,xb0 = self.xxb_seq_second[:1]
-            k1parts_next = self.fgp._kernel_parts(xb_next,xb0,self.beta,self.kappa)
+            k1parts_next = self.fgp.kernel.base_kernel.get_per_dim_components(xb_next,xb0,self.beta,self.kappa)
             self.k1parts = torch.cat([self.k1parts,k1parts_next],dim=0)
             self.n = i.stop
         return self.k1parts[i]
 
 class _LamCaches(object):
-    def __init__(self, fgp, l0, l1, beta0, beta1, c0, c1):
+    def __init__(self, fgp, l0, l1, beta0, beta1, c):
         self.fgp = fgp
         self.l0 = l0
         self.l1 = l1
-        assert c0.ndim==1 and c1.ndim==1
-        assert beta0.shape==(len(c0),self.fgp.d) and beta1.shape==(len(c1),self.fgp.d)
-        self.c0 = c0 
-        self.c1 = c1 
+        assert c.ndim==1
+        assert beta0.shape==(len(c),self.fgp.d) and beta1.shape==(len(c),self.fgp.d)
+        self.c = c 
         self.beta0 = beta0 
         self.beta1 = beta1
         self.m_min,self.m_max = -1,-1
@@ -122,17 +82,17 @@ class _LamCaches(object):
         self.lam_list = [torch.empty(0,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device)]
     def _frozen_equal(self, i):
         return (
-            (self.fgp.raw_scale==self.raw_scale_freeze_list[i]).all() and 
-            (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze_list[i]).all() and 
+            (self.fgp.kernel.base_kernel.raw_scale==self.raw_scale_freeze_list[i]).all() and 
+            (self.fgp.kernel.base_kernel.raw_lengthscales==self.raw_lengthscales_freeze_list[i]).all() and 
             (self.fgp.raw_noise==self.raw_noise_freeze_list[i]).all())
     def _force_recompile(self):
         return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
-            self.fgp.raw_scale.requires_grad or 
-            self.fgp.raw_lengthscales.requires_grad or 
+            self.fgp.kernel.base_kernel.raw_scale.requires_grad or 
+            self.fgp.kernel.base_kernel.raw_lengthscales.requires_grad or 
             self.fgp.raw_noise.requires_grad)
     def _freeze(self, i):
-        self.raw_scale_freeze_list[i] = self.fgp.raw_scale.clone()
-        self.raw_lengthscales_freeze_list[i] = self.fgp.raw_lengthscales.clone()
+        self.raw_scale_freeze_list[i] = self.fgp.kernel.base_kernel.raw_scale.clone()
+        self.raw_lengthscales_freeze_list[i] = self.fgp.kernel.base_kernel.raw_lengthscales.clone()
         self.raw_noise_freeze_list[i] = self.fgp.raw_noise.clone()
     def __getitem__no_delete(self, m):
         if isinstance(m,torch.Tensor):
@@ -141,14 +101,16 @@ class _LamCaches(object):
         assert isinstance(m,int)
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
-            k1 = self.fgp._kernel_from_parts(self.fgp.get_k1parts(self.l0,self.l1,n=2**m),self.beta0,self.beta1,self.c0,self.c1)
+            batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
+            k1 = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.get_k1parts(self.l0,self.l1,n=2**m),self.beta0,self.beta1,self.c,batch_params)
             self.lam_list = [self.fgp.ft(k1)]
             self._freeze(0)
             self.m_min = self.m_max = m
             return self.lam_list[0]
         if m==self.m_min:
             if not self._frozen_equal(0) or self._force_recompile():
-                k1 = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min],self.beta0,self.beta1,self.c0,self.c1)
+                batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
+                k1 = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.k1parts_seq[self.l0,self.l1][:2**self.m_min],self.beta0,self.beta1,self.c,batch_params)
                 self.lam_list[0] = self.fgp.ft(k1)
                 self._freeze(0)
             return self.lam_list[0]
@@ -160,16 +122,13 @@ class _LamCaches(object):
             self.m_max = m
         midx = m-self.m_min
         if not self._frozen_equal(midx) or self._force_recompile():
-            omega_m = self.fgp.get_omega(m-1)
-            k1_m = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][2**(m-1):2**m],self.beta0,self.beta1,self.c0,self.c1)
+            omega_m = self.fgp.omega(m-1)
+            batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
+            k1_m = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.k1parts_seq[self.l0,self.l1][2**(m-1):2**m],self.beta0,self.beta1,self.c,batch_params)
             lam_m = self.fgp.ft(k1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(m-1)
             self.lam_list[midx] = torch.cat([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m],-1)/np.sqrt(2)
-            if os.environ.get("FASTGP_DEBUG")=="True":
-                k1_full = self.fgp._kernel_from_parts(self.fgp.k1parts_seq[self.l0,self.l1][:2**m],self.beta0,self.beta1,self.c0,self.c1)
-                lam_full = self.fgp.ft(k1_full)
-                assert torch.allclose(self.lam_list[midx],lam_full,atol=1e-7,rtol=0)
             self._freeze(midx)
         return self.lam_list[midx]
     def __getitem__(self, m):
@@ -181,27 +140,6 @@ class _LamCaches(object):
             del self.raw_noise_freeze_list[0]
             self.m_min += 1
         return lam
-
-class _TaskCovCache(object):
-    def __init__(self, fgp):
-        self.fgp = fgp 
-    def _frozen_equal(self):
-        return (
-            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
-            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
-    def _force_recompile(self):
-        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
-            self.fgp.raw_factor_task_kernel.requires_grad or 
-            self.fgp.raw_noise_task_kernel.requires_grad)
-    def _freeze(self):
-        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
-        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
-    def __call__(self):
-        if not hasattr(self,"kmat") or not self._frozen_equal() or self._force_recompile():
-            self.kmat = torch.einsum("...il,...kl->...ik",self.fgp.factor_task_kernel,self.fgp.factor_task_kernel)
-            self.kmat = self.kmat+self.fgp.noise_task_kernel[...,None]*torch.eye(self.fgp.num_tasks,device=self.fgp.device)
-            self._freeze()
-        return self.kmat
 
 class _YtildeCache(object):
     def __init__(self, fgp, l):
@@ -215,7 +153,7 @@ class _YtildeCache(object):
         while self.n!=self.fgp.n[self.l]:
             n_double = 2*self.n
             ytilde_next = self.fgp.ft(self.fgp._y[self.l][...,self.n:n_double])
-            omega_m = self.fgp.get_omega(int(np.log2(self.n)))
+            omega_m = self.fgp.omega(int(np.log2(self.n)))
             omega_ytilde_next = omega_m*ytilde_next
             self.ytilde = torch.cat([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next],-1)/np.sqrt(2)
             if os.environ.get("FASTGP_DEBUG")=="True":
@@ -224,36 +162,22 @@ class _YtildeCache(object):
             self.n = n_double
         return self.ytilde
 
-class _AbstractInverseLogDetCache(object):
+class _AbstractCache(object):
     def _frozen_equal(self):
-        return (
-            (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
-            (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
-            (self.fgp.raw_noise==self.raw_noise_freeze).all() and 
-            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
-            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
+        return not any((self.state_dict[pname]!=pval).any() for pname,pval in self.fgp.named_parameters())
     def _force_recompile(self):
-        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
-            self.fgp.raw_scale.requires_grad or 
-            self.fgp.raw_lengthscales.requires_grad or 
-            self.fgp.raw_noise.requires_grad or 
-            self.fgp.raw_factor_task_kernel.requires_grad or 
-            self.fgp.raw_noise_task_kernel.requires_grad)
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and any(pval.requires_grad for pname,pval in self.fgp.named_parameters())
     def _freeze(self):
-        self.raw_scale_freeze = self.fgp.raw_scale.clone()
-        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
-        self.raw_noise_freeze = self.fgp.raw_noise.clone()
-        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
-        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
+        self.state_dict = {pname:pval.data.detach().clone() for pname,pval in self.fgp.state_dict().items()}
 
-class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
+class _StandardInverseLogDetCache(_AbstractCache):
     def __init__(self, fgp, n):
         self.fgp = fgp
         self.n = n
     def __call__(self):
         if not hasattr(self,"thetainv") or not self._frozen_equal() or self._force_recompile():
-            kmat_tasks = self.fgp.gram_matrix_tasks
-            kmat_lower_tri = [[self.fgp._kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],self.fgp.derivatives[l0],self.fgp.derivatives[l1],self.fgp.derivatives_coeffs[l0],self.fgp.derivatives_coeffs[l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
+            kmat_tasks = self.fgp.kernel.taskmat
+            kmat_lower_tri = [[self.fgp.kernel.base_kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],*self.fgp.derivatives_cross[l0][l1],self.fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
             if self.fgp.adaptive_nugget:
                 assert self.fgp.noise.size(-1)==1
                 n0range = torch.arange(self.n[0],device=self.fgp.device)
@@ -308,7 +232,7 @@ class _StandardInverseLogDetCache(_AbstractInverseLogDetCache):
         inv_diag = thetainv[...,nrange,nrange]
         return inv_diag
     
-class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
+class _FastInverseLogDetCache(_AbstractCache):
     def __init__(self, fgp, n):
         self.fgp = fgp
         self.n = n
@@ -317,7 +241,7 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
     def __call__(self):
         if not hasattr(self,"inv") or not self._frozen_equal() or self._force_recompile():
             n = self.n[self.task_order]
-            kmat_tasks = self.fgp.gram_matrix_tasks
+            kmat_tasks = self.fgp.kernel.taskmat
             lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
             for l0 in range(self.fgp.num_tasks):
                 to0 = self.task_order[l0]
@@ -435,29 +359,9 @@ class _FastInverseLogDetCache(_AbstractInverseLogDetCache):
             inv_diag = kmatinv[...,nrange,nrange]
         return inv_diag
 
-class _CoeffsCache(object):
+class _CoeffsCache(_AbstractCache):
     def __init__(self, fgp):
         self.fgp = fgp
-    def _frozen_equal(self):
-        return (
-            (self.fgp.raw_scale==self.raw_scale_freeze).all() and 
-            (self.fgp.raw_lengthscales==self.raw_lengthscales_freeze).all() and 
-            (self.fgp.raw_noise==self.raw_noise_freeze).all() and 
-            (self.fgp.raw_factor_task_kernel==self.raw_factor_task_kernel_freeze).all() and 
-            (self.fgp.raw_noise_task_kernel==self.raw_noise_task_kernel_freeze).all())
-    def _force_recompile(self):
-        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
-            self.fgp.raw_scale.requires_grad or 
-            self.fgp.raw_lengthscales.requires_grad or 
-            self.fgp.raw_noise.requires_grad or 
-            self.fgp.raw_factor_task_kernel.requires_grad or 
-            self.fgp.raw_noise_task_kernel.requires_grad)
-    def _freeze(self):
-        self.raw_scale_freeze = self.fgp.raw_scale.clone()
-        self.raw_lengthscales_freeze = self.fgp.raw_lengthscales.clone()
-        self.raw_noise_freeze = self.fgp.raw_noise.clone()
-        self.raw_factor_task_kernel_freeze = self.fgp.raw_factor_task_kernel.clone()
-        self.raw_noise_task_kernel_freeze = self.fgp.raw_noise_task_kernel.clone()
     def __call__(self):
         if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
             inv_log_det_cache = self.fgp.get_inv_log_det_cache()
