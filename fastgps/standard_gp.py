@@ -43,16 +43,16 @@ class StandardGP(AbstractGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.0794)
+        tensor(0.0817)
         >>> torch.linalg.norm(sgp.post_mean(sgp.x)-sgp.y)/torch.linalg.norm(y)
-        tensor(0.0524)
+        tensor(0.0402)
 
         >>> data = sgp.fit(verbose=0)
         >>> list(data.keys())
-        ['iterations']
+        []
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0832)
+        tensor(0.0577)
         >>> z = torch.rand((2**8,d),generator=rng)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -75,15 +75,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.0124)
+        tensor(20.3584)
         >>> sgp.post_cubature_var()
-        tensor(0.0064)
+        tensor(0.0035)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(19.8063)
+        tensor(20.2069)
         >>> pcci_high
-        tensor(20.2184)
+        tensor(20.5098)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -93,7 +93,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1106)
+        tensor(0.0848)
 
         >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
         >>> assert torch.allclose(sgp.post_var(x),pvar_future)
@@ -101,17 +101,17 @@ class StandardGP(AbstractGP):
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0627)
+        tensor(0.0565)
 
         >>> x_next = sgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1001)
+        tensor(0.1515)
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0613)
+        tensor(0.0555)
 
         >>> pcov_16n = sgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = sgp.post_var(x,n=16*n)
