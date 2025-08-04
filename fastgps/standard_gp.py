@@ -236,7 +236,7 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        v = inv_log_det_cache.gram_matrix_solve(kints)
+        v = inv_log_det_cache.gram_matrix_solve(kints.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task,task)
         pcvar = tval-(kints*v).sum(-1)
         pcvar[pcvar<0] = 0.
@@ -265,7 +265,7 @@ class StandardGP(AbstractGP):
         equal = torch.equal(task0,task1)
         kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
         kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        v = inv_log_det_cache.gram_matrix_solve(kints1)
+        v = inv_log_det_cache.gram_matrix_solve(kints1.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task0[:,None],task1[None,:])
         pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)
         if equal:

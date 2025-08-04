@@ -109,7 +109,7 @@ class AbstractFastGP(AbstractGP):
         if n is None: n = self.n
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
-        kmat_tasks = self.gram_matrix_tasks
+        kmat_tasks = self.kernel.taskmat
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         inv = inv_log_det_cache()[0]
         to = inv_log_det_cache.task_order
@@ -134,7 +134,8 @@ class AbstractFastGP(AbstractGP):
         kmat_tasks_left = kmat_tasks[...,task0,:][...,:,to].to(self._FTOUTDTYPE)
         kmat_tasks_right = kmat_tasks[...,to,:][...,:,task1].to(self._FTOUTDTYPE)
         term = torch.einsum("...ij,...jk,...kl->...il",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
-        pccov = self.scale[...,None]*kmat_tasks[...,task0,:][...,:,task1]-self.scale[...,None]**2*term
+        s = self.kernel.base_kernel.scale
+        pccov = s[...,None]*kmat_tasks[...,task0,:][...,:,task1]-s[...,None]**2*term
         if equal:
             tvec = torch.arange(pccov.size(-1))
             diag = pccov[...,tvec,tvec]
