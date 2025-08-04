@@ -77,8 +77,8 @@ class AbstractGP(torch.nn.Module):
                 self.derivatives_cross[l0][l1][1] = derivatives[l1][i1]
                 self.derivatives_coeffs_cross[l0][l1] = derivatives_coeffs[l0][i0]*derivatives_coeffs[l1][i1]
                 if l0!=l1:
-                    self.derivatives_cross[l1][l0][0] = self.derivatives_cross[l0][l1][0]
-                    self.derivatives_cross[l1][l0][1] = self.derivatives_cross[l0][l1][1]
+                    self.derivatives_cross[l1][l0][0] = self.derivatives_cross[l0][l1][1]
+                    self.derivatives_cross[l1][l0][1] = self.derivatives_cross[l0][l1][0]
                     self.derivatives_coeffs_cross[l1][l0] = self.derivatives_coeffs_cross[l0][l1]
         # noise
         self.raw_noise,self.tf_noise = self.kernel.parse_assign_param(
@@ -96,9 +96,9 @@ class AbstractGP(torch.nn.Module):
         self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
         if any((derivatives[i]>0).any() or (derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
-            self.raw_noise_task_kernel.requires_grad_(False)
-            self.raw_factor_task_kernel.requires_grad_(False)
-            assert (self.gram_matrix_tasks==1).all()
+            self.kernel.raw_factor.requires_grad_(False)
+            self.kernel.raw_diag.requires_grad_(False)
+            assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
     def save_params(self, path):
         """ Save the state dict to path 
