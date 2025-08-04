@@ -5,7 +5,7 @@ from .util import (
 )
 import torch
 import numpy as np
-import qmcpy as qmcpy
+import qmcpy
 from typing import Tuple,Union
 
 class StandardGP(AbstractGP):

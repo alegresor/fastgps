@@ -1,7 +1,7 @@
 from .abstract_fast_gp import AbstractFastGP
 import torch
 import numpy as np
-import qmcpy as qmcpy
+import qmcpy
 from typing import Tuple,Union
 
 class FastGPDigitalNetB2(AbstractFastGP):

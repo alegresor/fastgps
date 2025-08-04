@@ -65,8 +65,8 @@ class AbstractGP(torch.nn.Module):
         if derivatives_coeffs is None: derivatives_coeffs = [torch.ones(len(derivatives[i]),device=self.device) for i in range(self.num_tasks)]
         assert isinstance(derivatives_coeffs,list) and len(derivatives_coeffs)==self.num_tasks
         assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(derivatives[i]) for i in range(self.num_tasks))
-        self.derivatives_cross = [[[None,None] for l1 in range(l0+1)] for l0 in range(self.num_tasks)]
-        self.derivatives_coeffs_cross = [[None for l1 in range(l0+1)] for l0 in range(self.num_tasks)]
+        self.derivatives_cross = [[[None,None] for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
+        self.derivatives_coeffs_cross = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
         for l0 in range(self.num_tasks):
             p0r = torch.arange(len(derivatives_coeffs[l0]),device=self.device)
             for l1 in range(l0+1):
@@ -76,6 +76,10 @@ class AbstractGP(torch.nn.Module):
                 self.derivatives_cross[l0][l1][0] = derivatives[l0][i0]
                 self.derivatives_cross[l0][l1][1] = derivatives[l1][i1]
                 self.derivatives_coeffs_cross[l0][l1] = derivatives_coeffs[l0][i0]*derivatives_coeffs[l1][i1]
+                if l0!=l1:
+                    self.derivatives_cross[l1][l0][0] = self.derivatives_cross[l0][l1][0]
+                    self.derivatives_cross[l1][l0][1] = self.derivatives_cross[l0][l1][1]
+                    self.derivatives_coeffs_cross[l1][l0] = self.derivatives_coeffs_cross[l0][l1]
         # noise
         self.raw_noise,self.tf_noise = self.kernel.parse_assign_param(
             pname = "noise",

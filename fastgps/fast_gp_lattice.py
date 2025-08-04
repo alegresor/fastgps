@@ -1,6 +1,6 @@
 from .abstract_fast_gp import AbstractFastGP
 import torch 
-import qmcpy as qmcpy
+import qmcpy
 import numpy as np
 from typing import Tuple,Union
 
