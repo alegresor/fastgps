@@ -132,6 +132,44 @@ class FastGPLattice(AbstractFastGP):
         True
         >>> torch.allclose(fgp.post_cubature_var(),pcvar_16n)
         True
+
+        Different loss metrics for fitting 
+        
+        >>> n = 2**6
+        >>> d = 3
+        >>> sgp = FastGPLattice(
+        ...     qmcpy.KernelShiftInvar(d,torchify=True,device=device),
+        ...     qmcpy.Lattice(dimension=d,seed=7))
+        >>> x_next = sgp.get_x_next(n)
+        >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
+        >>> sgp.add_y_next(y_next)
+        >>> data = sgp.fit(loss_metric="MLL",iterations=5,verbose=1)
+             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 3.01e+02   | 3.01e+02   | 9.09e+00   | 3.58e+02  
+                    1.00e+00 | 2.81e+02   | 2.81e+02   | 1.03e+01   | 3.17e+02  
+                    2.00e+00 | 2.58e+02   | 2.58e+02   | 1.20e+01   | 2.68e+02  
+                    3.00e+00 | 2.30e+02   | 2.30e+02   | 1.46e+01   | 2.10e+02  
+                    4.00e+00 | 1.98e+02   | 1.98e+02   | 1.88e+01   | 1.41e+02  
+                    5.00e+00 | 1.60e+02   | 1.60e+02   | 2.60e+01   | 5.90e+01  
+        >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=1,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
+             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 6.48e-01   | 6.48e-01   | nan        | nan       
+                    1.00e+00 | 6.35e-01   | 6.35e-01   | nan        | nan       
+                    2.00e+00 | 6.24e-01   | 6.24e-01   | nan        | nan       
+                    3.00e+00 | 6.14e-01   | 6.14e-01   | nan        | nan       
+                    4.00e+00 | 6.02e-01   | 6.02e-01   | nan        | nan       
+                    5.00e+00 | 5.84e-01   | 5.84e-01   | nan        | nan       
+        >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=1)
+             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    0.00e+00 | 1.09e+01   | 1.09e+01   | nan        | 1.21e+01  
+                    1.00e+00 | 1.07e+01   | 1.07e+01   | nan        | 2.31e+01  
+                    2.00e+00 | 1.05e+01   | 1.05e+01   | nan        | 4.18e+01  
+                    3.00e+00 | 1.02e+01   | 1.02e+01   | nan        | 5.90e+01  
+                    4.00e+00 | 9.89e+00   | 9.89e+00   | nan        | 1.00e+02  
+                    5.00e+00 | 9.49e+00   | 9.49e+00   | nan        | 2.08e+02  
     """
     def __init__(self,
             kernel:qmcpy.KernelShiftInvar,

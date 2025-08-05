@@ -13,7 +13,8 @@ import warnings
 
 
 class AbstractGP(torch.nn.Module):
-    def __init__(self,
+    def __init__(
+            self,
             kernel,
             seqs,
             num_tasks,
@@ -124,18 +125,19 @@ class AbstractGP(torch.nn.Module):
         # return torch.optim.Adam(self.parameters(),lr=lr,amsgrad=True)
         if lr is None: lr = 1e-1
         return torch.optim.Rprop(self.parameters(),lr=lr,etas=(0.5,1.2),step_sizes=(0,10))
-    def fit(self,
-        loss_metric:str = "MLL",
-        iterations:int = 5000,
-        lr:float = None,
-        optimizer:torch.optim.Optimizer = None,
-        stop_crit_improvement_threshold:float = 5e-2,
-        stop_crit_wait_iterations:int = 10,
-        store_hists:bool = False,
-        verbose:int = 5,
-        verbose_indent:int = 4,
-        cv_weights:torch.Tensor = 1,
-        ):
+    def fit(
+            self,
+            loss_metric:str = "MLL",
+            iterations:int = 5000,
+            lr:float = None,
+            optimizer:torch.optim.Optimizer = None,
+            stop_crit_improvement_threshold:float = 5e-2,
+            stop_crit_wait_iterations:int = 10,
+            store_hists:bool = False,
+            verbose:int = 5,
+            verbose_indent:int = 4,
+            cv_weights:torch.Tensor = 1,
+            ):
         """
         Args:
             loss_metric (str): either "MLL" (Marginal Log Likelihood) or "CV" (Cross Validation) or "GCV" (Generalized CV)
@@ -205,7 +207,7 @@ class AbstractGP(torch.nn.Module):
                 os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
                 term1 = term2 = torch.nan*torch.ones(1)
                 squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
-                loss = squared_sums.sum()
+                loss = squared_sums.sum().real
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -229,6 +231,7 @@ class AbstractGP(torch.nn.Module):
                 _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
                 print(" "*verbose_indent+_s)
             if break_condition: break
+            # with torch.autograd.set_detect_anomaly(True):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
