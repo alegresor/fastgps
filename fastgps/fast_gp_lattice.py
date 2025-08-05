@@ -122,8 +122,6 @@ class FastGPLattice(AbstractFastGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
-    _XBDTYPE = torch.float64
-    _FTOUTDTYPE = torch.complex128
     def __init__(self,
             kernel:qmcpy.KernelShiftInvar,
             seqs:qmcpy.Lattice,
@@ -157,6 +155,8 @@ class FastGPLattice(AbstractFastGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
+        self._XBDTYPE = torch.get_default_dtype()
+        self._FTOUTDTYPE = torch.complex64 if torch.get_default_dtype()==torch.float32 else torch.complex128
         if isinstance(kernel,qmcpy.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks

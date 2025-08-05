@@ -9,6 +9,7 @@ import scipy.stats
 import os
 from typing import Union,List
 from collections import OrderedDict
+import warnings
 
 
 class AbstractGP(torch.nn.Module):
@@ -27,7 +28,10 @@ class AbstractGP(torch.nn.Module):
             adaptive_nugget,
         ):
         super().__init__()
-        assert torch.get_default_dtype()==torch.float64, "fast transforms do not work without torch.float64 precision" 
+        if not torch.get_default_dtype()==torch.float64:
+            warnings.warn('''
+                Using torch.float32 precision may significantly hurt FastGPs accuracy. If possible, please use please use 
+                    torch.set_default_dtype(torch.float64)''')
         # copy kernel parameters 
         self.kernel = kernel
         assert self.kernel.torchify, "requires torchify=True for the kernel"
@@ -238,7 +242,7 @@ class AbstractGP(torch.nn.Module):
                 hist_data[pname] = torch.stack(hist_data[pname],dim=0)
         return hist_data
     def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(self.device)
+        x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(self.device).to(torch.get_default_dtype())
         return x,x
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """

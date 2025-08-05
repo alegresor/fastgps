@@ -123,8 +123,6 @@ class StandardGP(AbstractGP):
         >>> assert torch.allclose(sgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(sgp.post_cubature_var(),pcvar_16n)
     """
-    _XBDTYPE = torch.float64
-    _FTOUTDTYPE = torch.float64
     def __init__(self,
             kernel:qmcpy.kernel.abstract_kernel.AbstractKernel,
             seqs:Union[qmcpy.IIDStdUniform,int],
@@ -157,6 +155,8 @@ class StandardGP(AbstractGP):
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
             data (dict): dictory of data with keys 'x' and 'y' where data['x'] and data['y'] are both `torch.Tensor`s or list of `torch.Tensor`s with lengths equal to the number of tasks
         """
+        self._XBDTYPE = torch.get_default_dtype()
+        self._FTOUTDTYPE = torch.get_default_dtype()
         if isinstance(kernel,qmcpy.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks
@@ -165,15 +165,16 @@ class StandardGP(AbstractGP):
             solo_task = True
             default_task = 0 
             num_tasks = 1
-        if data is not None:
-            assert isinstance(seqs,int), "passing in data requires seqs (the first argument) is a int specifying the dimension"
-            assert isinstance(data,dict) and "x" in data and "y" in data, "data must be a dict with keys 'x' and 'y'"
+        if isinstance(seqs,dict):
+            data = seqs
+            assert "x" in data and "y" in data, "dict seqs must have keys 'x' and 'y'"
             if isinstance(data["x"],torch.Tensor): data["x"] = [data["x"]]
             if isinstance(data["y"],torch.Tensor): data["y"] = [data["y"]]
-            assert isinstance(data["x"],list) and len(data["x"])==num_tasks and all(isinstance(x_l,torch.Tensor) and x_l.ndim==2 and x_l.size(1)==seqs for x_l in data["x"]), "data['x'] should be a list of 2d tensors of length num_tasks with each number of columns equal to the dimension"
+            assert isinstance(data["x"],list) and len(data["x"])==num_tasks and all(isinstance(x_l,torch.Tensor) and x_l.ndim==2 and x_l.size(1)==kernel.d for x_l in data["x"]), "data['x'] should be a list of 2d tensors of length num_tasks with each number of columns equal to the dimension"
             assert isinstance(data["y"],list) and len(data["y"])==num_tasks and all(isinstance(y_l,torch.Tensor) and y_l.ndim>=1 for y_l in data["y"]), "data['y'] should be a list of tensors of length num_tasks"
             seqs = np.array([DummyDiscreteDistrib(data["x"][l].cpu().detach().numpy()) for l in range(num_tasks)],dtype=object)
         else:
+            data = None
             if isinstance(seqs,int):
                 global_seed = seqs
                 seqs = np.array([qmcpy.DigitalNetB2(kernel.d,seed=seed,order="GRAY") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)

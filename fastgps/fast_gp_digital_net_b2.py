@@ -117,8 +117,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
         >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
     """
-    _XBDTYPE = torch.int64
-    _FTOUTDTYPE = torch.float64
     def __init__(self,
             kernel:qmcpy.KernelDigShiftInvar,
             seqs:Union[qmcpy.DigitalNetB2,int],
@@ -153,6 +151,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
         """
+        self._XBDTYPE = torch.int64
+        self._FTOUTDTYPE = torch.get_default_dtype()
         if isinstance(kernel,qmcpy.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks
