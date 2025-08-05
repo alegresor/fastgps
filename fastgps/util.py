@@ -122,7 +122,7 @@ class _LamCaches(object):
             self.m_max = m
         midx = m-self.m_min
         if not self._frozen_equal(midx) or self._force_recompile():
-            omega_m = self.fgp.omega(m-1)
+            omega_m = self.fgp.omega(m-1).to(self.fgp.device)
             batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
             k1_m = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.k1parts_seq[self.l0,self.l1][2**(m-1):2**m],self.beta0,self.beta1,self.c,batch_params)
             lam_m = self.fgp.ft(k1_m)
@@ -153,7 +153,7 @@ class _YtildeCache(object):
         while self.n!=self.fgp.n[self.l]:
             n_double = 2*self.n
             ytilde_next = self.fgp.ft(self.fgp._y[self.l][...,self.n:n_double])
-            omega_m = self.fgp.omega(int(np.log2(self.n)))
+            omega_m = self.fgp.omega(int(np.log2(self.n))).to(self.fgp.device)
             omega_ytilde_next = omega_m*ytilde_next
             self.ytilde = torch.cat([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next],-1)/np.sqrt(2)
             if os.environ.get("FASTGP_DEBUG")=="True":

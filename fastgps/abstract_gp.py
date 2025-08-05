@@ -30,7 +30,9 @@ class AbstractGP(torch.nn.Module):
         super().__init__()
         if not torch.get_default_dtype()==torch.float64:
             warnings.warn('''
-                Using torch.float32 precision may significantly hurt FastGPs accuracy. If possible, please use please use 
+                Using torch.float32 precision may significantly hurt FastGPs accuracy. 
+                This is especailly evident when computing posterior variance and covariance values. 
+                If possible, please use
                     torch.set_default_dtype(torch.float64)''')
         # copy kernel parameters 
         self.kernel = kernel

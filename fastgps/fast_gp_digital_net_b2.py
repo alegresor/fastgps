@@ -9,7 +9,9 @@ class FastGPDigitalNetB2(AbstractFastGP):
     Fast Gaussian process regression using digitally shifted digital nets paired with digitally shift invariant kernels
     
     Examples:
-        >>> torch.set_default_dtype(torch.float64)
+        >>> device = "cpu"
+        >>> if device!="mps":
+        ...     torch.set_default_dtype(torch.float64)
 
         >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
         ...     # https://www.sfu.ca/~ssurjano/ackley.html
@@ -24,14 +26,14 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> n = 2**10
         >>> d = 2
         >>> fgp = FastGPDigitalNetB2(
-        ...     qmcpy.KernelDigShiftInvar(d,torchify=True),
+        ...     qmcpy.KernelDigShiftInvar(d,torchify=True,device=device),
         ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = fgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
 
         >>> rng = torch.Generator().manual_seed(17)
-        >>> x = torch.rand((2**7,d),generator=rng)
+        >>> x = torch.rand((2**7,d),generator=rng).to(device)
         >>> y = f_ackley(x)
         
         >>> pmean = fgp.post_mean(x)
@@ -39,7 +41,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
         tensor(0.0319)
-        >>> assert torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+        >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
+        True
 
         >>> data = fgp.fit(verbose=0)
         >>> list(data.keys())
@@ -47,7 +50,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0308)
-        >>> z = torch.rand((2**8,d),generator=rng)
+        >>> z = torch.rand((2**8,d),generator=rng).to(device)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
         torch.Size([128, 256])
@@ -55,12 +58,14 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> pcov = fgp.post_cov(x,x)
         >>> pcov.shape
         torch.Size([128, 128])
-        >>> assert (pcov.diagonal()>=0).all()
+        >>> (pcov.diagonal()>=0).all()
+        tensor(True)
 
         >>> pvar = fgp.post_var(x)
         >>> pvar.shape
         torch.Size([128])
-        >>> assert torch.allclose(pcov.diagonal(),pvar)
+        >>> torch.allclose(pcov.diagonal(),pvar,atol=1e-5)
+        True
 
         >>> pmean,pstd,q,ci_low,ci_high = fgp.post_ci(x,confidence=0.99)
         >>> ci_low.shape
@@ -89,9 +94,12 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0245)
 
-        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_future)
-        >>> assert torch.allclose(fgp.post_var(x),pvar_future)
-        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_future)
+        >>> torch.allclose(fgp.post_cov(x,z),pcov_future)
+        True
+        >>> torch.allclose(fgp.post_var(x),pvar_future)
+        True
+        >>> torch.allclose(fgp.post_cubature_var(),pcvar_future)
+        True
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
@@ -113,9 +121,12 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> x_next = fgp.get_x_next(16*n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
-        >>> assert torch.allclose(fgp.post_cov(x,z),pcov_16n)
-        >>> assert torch.allclose(fgp.post_var(x),pvar_16n)
-        >>> assert torch.allclose(fgp.post_cubature_var(),pcvar_16n)
+        >>> torch.allclose(fgp.post_cov(x,z),pcov_16n)
+        True
+        >>> torch.allclose(fgp.post_var(x),pvar_16n)
+        True
+        >>> torch.allclose(fgp.post_cubature_var(),pcvar_16n)
+        True
     """
     def __init__(self,
             kernel:qmcpy.KernelDigShiftInvar,
