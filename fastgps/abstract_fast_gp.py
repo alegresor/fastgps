@@ -34,7 +34,7 @@ class AbstractFastGP(AbstractGP):
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         n_og = n 
         if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
-        if isinstance(n,list): n = torch.tensor(n,dtype=int)
+        if isinstance(n,list): n = torch.tensor(n,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and torch.logical_or(n==0,n&(n-1)==0).all(), "maximum sequence index must be a power of 2"
         return super().get_x_next(n=n_og,task=task)
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
@@ -67,8 +67,8 @@ class AbstractFastGP(AbstractGP):
             torch.set_grad_enabled(False)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if inttask: task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         coeffs_split = coeffs.split(self.n.tolist(),-1)
         coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
@@ -92,8 +92,8 @@ class AbstractFastGP(AbstractGP):
             torch.set_grad_enabled(False)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if inttask: task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]
         kmat_tasks_left = kmat_tasks[...,task,:][...,:,to].to(self._FTOUTDTYPE)
@@ -121,13 +121,13 @@ class AbstractFastGP(AbstractGP):
             torch.set_grad_enabled(False)
         if task0 is None: task0 = self.default_task
         inttask0 = isinstance(task0,int)
-        if inttask0: task0 = torch.tensor([task0],dtype=int)
-        if isinstance(task0,list): task0 = torch.tensor(task0,dtype=int)
+        if inttask0: task0 = torch.tensor([task0],dtype=int,device=self.device)
+        if isinstance(task0,list): task0 = torch.tensor(task0,dtype=int,device=self.device)
         assert task0.ndim==1 and (task0>=0).all() and (task0<self.num_tasks).all()
         if task1 is None: task1 = self.default_task
         inttask1 = isinstance(task1,int)
-        if inttask1: task1 = torch.tensor([task1],dtype=int)
-        if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
+        if inttask1: task1 = torch.tensor([task1],dtype=int,device=self.device)
+        if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(task0,task1)
         inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]

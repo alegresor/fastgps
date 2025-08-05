@@ -261,11 +261,11 @@ class AbstractGP(torch.nn.Module):
             x_next (Union[torch.Tensor,List]): next samples in the sequence
         """
         if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
-        if isinstance(n,list): n = torch.tensor(n,dtype=int)
+        if isinstance(n,list): n = torch.tensor(n,dtype=int,device=self.device)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if inttask: task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
         x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
@@ -280,8 +280,8 @@ class AbstractGP(torch.nn.Module):
         """
         if isinstance(y_next,torch.Tensor): y_next = [y_next]
         if task is None: task = self.default_task
-        if isinstance(task,int): task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if isinstance(task,int): task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(y_next,list) and isinstance(task,torch.Tensor) and task.ndim==1 and len(y_next)==len(task)
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
@@ -309,8 +309,8 @@ class AbstractGP(torch.nn.Module):
         assert x.ndim==2 and x.size(1)==self.d, "x must a torch.Tensor with shape (-1,d)"
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if inttask: task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
         pmean = torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
@@ -340,8 +340,8 @@ class AbstractGP(torch.nn.Module):
             torch.set_grad_enabled(False)
         if task is None: task = self.default_task
         inttask = isinstance(task,int)
-        if inttask: task = torch.tensor([task],dtype=int)
-        if isinstance(task,list): task = torch.tensor(task,dtype=int)
+        if inttask: task = torch.tensor([task],dtype=int,device=self.device)
+        if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
         kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
@@ -379,13 +379,13 @@ class AbstractGP(torch.nn.Module):
             torch.set_grad_enabled(False)
         if task0 is None: task0 = self.default_task
         inttask0 = isinstance(task0,int)
-        if inttask0: task0 = torch.tensor([task0],dtype=int)
-        if isinstance(task0,list): task0 = torch.tensor(task0,dtype=int)
+        if inttask0: task0 = torch.tensor([task0],dtype=int,device=self.device)
+        if isinstance(task0,list): task0 = torch.tensor(task0,dtype=int,device=self.device)
         assert task0.ndim==1 and (task0>=0).all() and (task0<self.num_tasks).all()
         if task1 is None: task1 = self.default_task
         inttask1 = isinstance(task1,int)
-        if inttask1: task1 = torch.tensor([task1],dtype=int)
-        if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int)
+        if inttask1: task1 = torch.tensor([task1],dtype=int,device=self.device)
+        if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
         kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
