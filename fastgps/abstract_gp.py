@@ -242,7 +242,7 @@ class AbstractGP(torch.nn.Module):
                 hist_data[pname] = torch.stack(hist_data[pname],dim=0)
         return hist_data
     def _sample(self, seq, n_min, n_max):
-        x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(self.device).to(torch.get_default_dtype())
+        x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
         return x,x
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """

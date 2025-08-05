@@ -13,8 +13,10 @@ class StandardGP(AbstractGP):
     Standard Gaussian process regression
     
     Examples:
-        >>> torch.set_default_dtype(torch.float64)
-
+        >>> device = "cpu"
+        >>> if device!="mps":
+        ...     torch.set_default_dtype(torch.float64)
+        
         >>> def f_ackley(x, a=20, b=0.2, c=2*np.pi, scaling=32.768):
         ...     # https://www.sfu.ca/~ssurjano/ackley.html
         ...     assert x.ndim==2
@@ -28,14 +30,14 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 2
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelSquaredExponential(d,torchify=True),
+        ...     qmcpy.KernelSquaredExponential(d,torchify=True,device=device),
         ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
 
         >>> rng = torch.Generator().manual_seed(17)
-        >>> x = torch.rand((2**7,d),generator=rng)
+        >>> x = torch.rand((2**7,d),generator=rng).to(device)
         >>> y = f_ackley(x)
         
         >>> pmean = sgp.post_mean(x)
@@ -53,7 +55,7 @@ class StandardGP(AbstractGP):
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0577)
-        >>> z = torch.rand((2**8,d),generator=rng)
+        >>> z = torch.rand((2**8,d),generator=rng).to(device)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
         torch.Size([128, 256])
@@ -61,12 +63,15 @@ class StandardGP(AbstractGP):
         >>> pcov = sgp.post_cov(x,x)
         >>> pcov.shape
         torch.Size([128, 128])
-        >>> assert (pcov.diagonal()>=0).all()
+        >>> (pcov.diagonal()>=0).all()
+        tensor(True)
 
         >>> pvar = sgp.post_var(x)
         >>> pvar.shape
         torch.Size([128])
-        >>> assert torch.allclose(pcov.diagonal(),pvar)
+        >>> torch.allclose(pcov.diagonal(),pvar)
+        True
+
 
         >>> pmean,pstd,q,ci_low,ci_high = sgp.post_ci(x,confidence=0.99)
         >>> ci_low.shape
@@ -95,9 +100,12 @@ class StandardGP(AbstractGP):
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
         tensor(0.0848)
 
-        >>> assert torch.allclose(sgp.post_cov(x,z),pcov_future)
-        >>> assert torch.allclose(sgp.post_var(x),pvar_future)
-        >>> assert torch.allclose(sgp.post_cubature_var(),pcvar_future)
+        >>> torch.allclose(sgp.post_cov(x,z),pcov_future)
+        True
+        >>> torch.allclose(sgp.post_var(x),pvar_future)
+        True
+        >>> torch.allclose(sgp.post_cubature_var(),pcvar_future)
+        True
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
@@ -119,9 +127,35 @@ class StandardGP(AbstractGP):
         >>> x_next = sgp.get_x_next(16*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
-        >>> assert torch.allclose(sgp.post_cov(x,z),pcov_16n)
-        >>> assert torch.allclose(sgp.post_var(x),pvar_16n)
-        >>> assert torch.allclose(sgp.post_cubature_var(),pcvar_16n)
+        >>> torch.allclose(sgp.post_cov(x,z),pcov_16n)
+        True
+        >>> torch.allclose(sgp.post_var(x),pvar_16n)
+        True
+        >>> torch.allclose(sgp.post_cubature_var(),pcvar_16n)
+        True
+
+        Data Driven
+
+        >>> x = [
+        ...     torch.rand((3,1),generator=rng).to(device),
+        ...     torch.rand((12,1),generator=rng).to(device),
+        ... ]
+        >>> y = [
+        ...     torch.stack([torch.sin(2*np.pi*x[0][:,0]),torch.cos(2*np.pi*x[0][:,0]),torch.acos(x[0][:,0])],dim=0).to(device),
+        ...     torch.stack([4*torch.sin(2*np.pi*x[1][:,0]),4*torch.cos(2*np.pi*x[1][:,0]),4*torch.acos(x[1][:,0])],dim=0).to(device),
+        ... ]
+        >>> sgp = StandardGP(
+        ...     qmcpy.KernelMultiTask(
+        ...         qmcpy.KernelGaussian(d=1,torchify=True,device=device),
+        ...         num_tasks = 2,
+        ...     ),
+        ...     seqs={"x":x,"y":y},
+        ...     noise = 1e-3,
+        ... )
+        >>> data = sgp.fit(verbose=0,iterations=10)
+        >>> xticks = torch.linspace(0,1,101,device=device) 
+        >>> pmean,pvar,q,pci_low,pci_high = sgp.post_ci(xticks[:,None])
+        >>> pcmean,pcvar,q,pcci_low,pcci_high =  sgp.post_cubature_ci()
     """
     def __init__(self,
             kernel:qmcpy.kernel.abstract_kernel.AbstractKernel,

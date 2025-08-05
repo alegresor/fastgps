@@ -203,7 +203,14 @@ class _StandardInverseLogDetCache(_AbstractCache):
                     spd_factor *= 2#raise Exception("Cholesky factor not SPD, try increasing noise")
             nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
             self.logdet = 2*torch.log(l_chol[...,nfrange,nfrange]).sum(-1)
-            self.thetainv = torch.cholesky_inverse(l_chol,upper=False)
+            try:
+                self.thetainv = torch.cholesky_inverse(l_chol,upper=False)
+            except NotImplementedError as e:
+                expected_str = "The operator 'aten::cholesky_inverse' is not currently implemented for the MPS device."
+                if str(e)[:len(expected_str)]!=expected_str: raise
+                eye = torch.eye(l_chol.size(-1),device=l_chol.device)
+                l_chol_inv = torch.linalg.solve_triangular(l_chol,eye,upper=False)
+                self.thetainv = torch.einsum("...ji,...jk->...ik",l_chol_inv,l_chol_inv)
             self._freeze()
         return self.thetainv,self.logdet
     def gram_matrix_solve(self, y):
