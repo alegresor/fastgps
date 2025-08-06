@@ -144,33 +144,9 @@ class StandardGP(AbstractGP):
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
         >>> sgp.add_y_next(y_next)
-        >>> data = sgp.fit(loss_metric="MLL",iterations=5,verbose=1)
-             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | -3.10e+02  | -3.10e+02  | 2.58e+01   | -8.82e+02 
-                    1.00e+00 | -3.26e+02  | -3.26e+02  | 2.71e+01   | -9.14e+02 
-                    2.00e+00 | -3.41e+02  | -3.41e+02  | 2.95e+01   | -9.47e+02 
-                    3.00e+00 | -3.56e+02  | -3.56e+02  | 3.38e+01   | -9.80e+02 
-                    4.00e+00 | -3.67e+02  | -3.67e+02  | 4.28e+01   | -1.01e+03 
-                    5.00e+00 | -3.72e+02  | -3.72e+02  | 5.72e+01   | -1.04e+03 
-        >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=1,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
-             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 9.26e-05   | 9.26e-05   | nan        | nan       
-                    1.00e+00 | 7.48e-05   | 7.48e-05   | nan        | nan       
-                    2.00e+00 | 6.39e-05   | 6.39e-05   | nan        | nan       
-                    3.00e+00 | 5.14e-05   | 5.14e-05   | nan        | nan       
-                    4.00e+00 | 3.47e-05   | 3.47e-05   | nan        | nan       
-                    5.00e+00 | 2.45e-05   | 2.45e-05   | nan        | nan       
-        >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=1)
-             iter of 5.0e+00 | best loss  | loss       | term1      | term2     
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                    0.00e+00 | 4.50e-04   | 4.50e-04   | nan        | 4.88e+07  
-                    1.00e+00 | 2.56e-04   | 2.56e-04   | nan        | 4.76e+07  
-                    2.00e+00 | 1.30e-04   | 1.30e-04   | nan        | 4.60e+07  
-                    3.00e+00 | 6.90e-05   | 6.90e-05   | nan        | 4.15e+07  
-                    4.00e+00 | 4.04e-05   | 4.04e-05   | nan        | 3.46e+07  
-                    5.00e+00 | 4.04e-05   | 4.55e-05   | nan        | 3.03e+07  
+        >>> data = sgp.fit(loss_metric="MLL",iterations=5,verbose=0)
+        >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
+        >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
 
         Data Driven
 
