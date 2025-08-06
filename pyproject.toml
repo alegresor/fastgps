@@ -46,7 +46,6 @@ dependencies = [
 dev = [
     "pytest >= 8.3.5",
     "nbval >= 0.10.0",
-    "pytest-accept >= 0.1.12",
     "jupyterlab >= 4.0.0",
     "matplotlib >= 3.9.0",
     "tueplots >= 0.2.0",
@@ -56,6 +55,12 @@ dev = [
     "mkdocs-jupyter >= 0.25.0",
     "mkdocstrings-python >= 1.16.0",
 ]
+superdev = [
+    "fastgps[dev]",
+    "pytest-accept >= 0.1.12",
+]
+
+
 
 [tool.pdm.version]
 source = "file"
