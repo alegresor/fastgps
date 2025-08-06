@@ -44,9 +44,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest >= 8.0.0",
+    "pytest >= 8.3.5",
     "nbval >= 0.10.0",
-    "pytest-accept >= 0.1.10",
+    "pytest-accept >= 0.1.12",
     "jupyterlab >= 4.0.0",
     "matplotlib >= 3.9.0",
     "tueplots >= 0.2.0",
