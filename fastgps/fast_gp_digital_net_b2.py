@@ -140,6 +140,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> sgp.add_y_next(y_next)
         >>> data = sgp.fit(loss_metric="MLL",iterations=5,verbose=0)
         >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
+        >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights="L2R")
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
     """
     def __init__(self,

@@ -107,6 +107,7 @@ class AbstractGP(torch.nn.Module):
             self.kernel.raw_diag.requires_grad_(False)
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
+        self.batch_param_names = ["noise"]
     def save_params(self, path):
         """ Save the state dict to path 
         
@@ -167,11 +168,19 @@ class AbstractGP(torch.nn.Module):
         assert (isinstance(stop_crit_wait_iterations,int) or stop_crit_wait_iterations==np.inf) and stop_crit_wait_iterations>0
         loss_metric = loss_metric.upper()
         logtol = np.log(1+stop_crit_improvement_threshold)
+        if isinstance(cv_weights,str) and cv_weights.upper()=="L2R":
+            _y = self.y 
+            if _y.ndim==1:
+                cv_weights = 1/torch.abs(_y) 
+            else:
+                cv_weights = 1/torch.linalg.norm(_y,2,dim=[i for i in range(_y.ndim-1)])
         if store_hists:
             hist_data = {}
             hist_data["iteration"] = []
-            hist_data["loss_hist"] = []
-            hist_data["best_loss_hist"] = []
+            hist_data["loss"] = []
+            hist_data["best_loss"] = []
+            for pname in self.batch_param_names:
+                hist_data[pname] = []
             for pname in self.kernel.batch_param_names:
                 hist_data[pname] = []
             for pname in self.kernel.base_kernel.batch_param_names:
@@ -221,8 +230,10 @@ class AbstractGP(torch.nn.Module):
             break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations
             if store_hists and (break_condition or i%store_hists==0):
                 hist_data["iteration"].append(i)
-                hist_data["loss_hist"].append(loss.item())
-                hist_data["best_loss_hist"].append(stop_crit_best_loss)
+                hist_data["loss"].append(loss.item())
+                hist_data["best_loss"].append(stop_crit_best_loss)
+                for pname in self.batch_param_names:
+                    hist_data[pname].append(getattr(self,pname).data.detach().clone().cpu())
                 for pname in self.kernel.batch_param_names:
                     hist_data[pname].append(getattr(self.kernel,pname).data.detach().clone().cpu())
                 for pname in self.kernel.base_kernel.batch_param_names:
@@ -239,8 +250,10 @@ class AbstractGP(torch.nn.Module):
         del os.environ["FASTGP_FORCE_RECOMPILE"]
         if store_hists:
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
-            hist_data["loss_hist"] = torch.tensor(hist_data["loss_hist"])
-            hist_data["best_loss_hist"] = torch.tensor(hist_data["best_loss_hist"])
+            hist_data["loss"] = torch.tensor(hist_data["loss"])
+            hist_data["best_loss"] = torch.tensor(hist_data["best_loss"])
+            for pname in self.batch_param_names:
+                hist_data[pname] = torch.stack(hist_data[pname],dim=0)
             for pname in self.kernel.batch_param_names:
                 hist_data[pname] = torch.stack(hist_data[pname],dim=0)
             for pname in self.kernel.base_kernel.batch_param_names:
