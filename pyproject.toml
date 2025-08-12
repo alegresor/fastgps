@@ -36,7 +36,7 @@ license = "MIT"
 dynamic = ["version"]
 requires-python = ">= 3.7"
 dependencies = [
-    "qmcpy >= 1.6.3.1a0",
+    "qmcpy >= 1.6.3.2a0",
     "torch >= 2.0.0",
     "numpy >= 1.17.0",
     "scipy >= 1.13.0",
@@ -44,9 +44,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest >= 8.0.0",
+    "pytest >= 8.3.5",
     "nbval >= 0.10.0",
-    "pytest-accept >= 0.1.10",
     "jupyterlab >= 4.0.0",
     "matplotlib >= 3.9.0",
     "tueplots >= 0.2.0",
@@ -56,6 +55,12 @@ dev = [
     "mkdocs-jupyter >= 0.25.0",
     "mkdocstrings-python >= 1.16.0",
 ]
+superdev = [
+    "fastgps[dev]",
+    "pytest-accept >= 0.1.12",
+]
+
+
 
 [tool.pdm.version]
 source = "file"

@@ -43,11 +43,10 @@ def plot_fastgps_fit_data(
     fig,ax = pyplot.subplots(nrows=nrows,ncols=ncols,figsize=(fsf_cols*ncols,fsf_rows)) 
     for i,key in enumerate(keys):
         data = fit_data[key]
-        iterrange = torch.arange(data.size(0))
         if data.ndim>1: data =data.flatten(start_dim=1)
         data = data.detach().to("cpu")
-        ax[i].plot(iterrange,data,linewidth=linewidth)
-        if (dict_log_scale is None and (data>0).all()) or dict_log_scale[key]==True:
+        ax[i].plot(fit_data["iteration"],data,linewidth=linewidth)
+        if (dict_log_scale is None and (data>0).all()) or (dict_log_scale is not None and dict_log_scale[key]==True):
             ax[i].set_yscale("log",base=10)
         ax[i].set_xlabel("iterations",fontsize=fontsize)
         ax[i].set_ylabel(key.replace("_"," ").replace(" hist",""),fontsize=fontsize)
