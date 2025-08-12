@@ -1,7 +1,7 @@
 site_name: "FastGPs"
 nav:
   - Home: index.md
-  - API: api.md
+  - Package Reference: api.md
   - Standard Examples:
     - Fast GP Net: examples/simple/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/simple/fgp_lattice.ipynb
