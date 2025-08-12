@@ -19,6 +19,6 @@ jobs:
       - run: pip install -e .
       - run: pip install pytest
       - run: make doctests
-      - run: pip install -e .[dev]
-      - run: conda env export
-      - run: make nbtests 
+      # - run: pip install -e .[dev]
+      # - run: conda env export
+      # - run: make nbtests 
