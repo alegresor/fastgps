@@ -72,7 +72,7 @@ class AbstractFastGP(AbstractGP):
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         coeffs_split = coeffs.split(self.n.tolist(),-1)
         coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
-        pcmean = torch.cat(coeffs_split_scaled,-1).sum(-1)
+        pcmean = self.prior_mean[...,task]+torch.cat(coeffs_split_scaled,-1).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean

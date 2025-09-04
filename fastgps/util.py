@@ -219,15 +219,15 @@ class _StandardInverseLogDetCache(_AbstractCache):
         v = torch.einsum("...ij,...j->...i",thetainv,y)
         return v
     def get_norm_term_logdet_term(self):
-        y = torch.cat(self.fgp._y,dim=-1)
+        delta = torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1)
         thetainv,logdet = self()
-        v = torch.einsum("...ij,...j->...i",thetainv,y)
-        norm_term = (y*v).sum(-1,keepdim=True)
+        v = torch.einsum("...ij,...j->...i",thetainv,delta)
+        norm_term = (delta*v).sum(-1,keepdim=True)
         return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
         thetainv,logdet = self()
-        y = torch.cat(self.fgp._y,dim=-1)
-        v = torch.einsum("...ij,...j->...i",thetainv,y)
+        delta = torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1)
+        v = torch.einsum("...ij,...j->...i",thetainv,delta)
         numer = (v**2).sum(-1,keepdim=True)
         tr_k_inv = torch.einsum("...ii",thetainv)[...,None]
         denom = (tr_k_inv/thetainv.size(-1))**2
@@ -336,14 +336,17 @@ class _FastInverseLogDetCache(_AbstractCache):
         return zst,inv,logdet
     def get_norm_term_logdet_term(self):
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
-        ytildescat = torch.cat(ytildes,dim=-1)
-        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+        deltatildescat = torch.cat(ytildes,dim=-1)
+        deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-torch.sqrt(self.fgp.n)*self.fgp.prior_mean
+        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1))
         ztildescat = torch.cat(ztildes,dim=-1)
-        norm_term = (ytildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
+        norm_term = (deltatildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
         return norm_term,logdet[...,None]
     def get_gcv_numer_denom(self):
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
-        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(ytildes)
+        deltatildescat = torch.cat(ytildes,dim=-1)
+        deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-torch.sqrt(self.fgp.n)*self.fgp.prior_mean
+        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1))
         ztildescat = torch.cat(ztildes,dim=-1)
         numer = (ztildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
         n = inv.size(-2)
@@ -372,7 +375,7 @@ class _CoeffsCache(_AbstractCache):
     def __call__(self):
         if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
             inv_log_det_cache = self.fgp.get_inv_log_det_cache()
-            self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat(self.fgp._y,dim=-1))
+            self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1))
             self._freeze()
             self.n = self.fgp.n.clone()
         return self.coeffs  

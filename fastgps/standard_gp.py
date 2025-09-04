@@ -267,7 +267,7 @@ class StandardGP(AbstractGP):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l)) for l in range(self.num_tasks)],dim=-1)
-        pcmean = (kints*coeffs[...,None,:]).sum(-1)
+        pcmean = self.prior_mean[...,task]+(kints*coeffs[...,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean

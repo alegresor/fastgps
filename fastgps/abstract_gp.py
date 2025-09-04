@@ -62,6 +62,7 @@ class AbstractGP(torch.nn.Module):
         assert all(seqs[i].d==self.d for i in range(self.num_tasks))
         self.seqs = seqs
         self.n = torch.zeros(self.num_tasks,dtype=int,device=self.device)
+        self.n_cumsum = torch.zeros(self.num_tasks,dtype=int,device=self.device)
         self.m = -1*torch.ones(self.num_tasks,dtype=int,device=self.device)
         # derivatives setup 
         if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64,device=self.device) for i in range(self.num_tasks)]
@@ -96,6 +97,7 @@ class AbstractGP(torch.nn.Module):
             tfs_param = tfs_noise,
             endsize_ops = [1],
             constraints = ["POSITIVE"])
+        self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
@@ -298,8 +300,12 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(y_next,list) and isinstance(task,torch.Tensor) and task.ndim==1 and len(y_next)==len(task)
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
+        shape_batch = list(self._y[0].shape[:-1])
+        if (self.n==0).all() and len(shape_batch)>0:
+            self.prior_mean = self.zeros(shape_batch+[self.num_tasks],device=self.device)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
         self.m = torch.where(self.n==0,-1,torch.log2(self.n).round()).to(int) # round to avoid things like torch.log2(torch.tensor([2**3],dtype=torch.int64,device="cuda")).item() = 2.9999999999999996
+        self.n_cumsum = torch.hstack([torch.zeros(1,dtype=self.n.dtype,device=self.n.device),self.n.cumsum(0)[:-1]])
         for key in list(self.inv_log_det_cache_dict.keys()):
             if (torch.tensor(key)<self.n.cpu()).any():
                 del self.inv_log_det_cache_dict[key]
@@ -326,7 +332,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        pmean = torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
+        pmean = self.prior_mean[...,task,None]+torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
