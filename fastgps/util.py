@@ -4,7 +4,7 @@ import numpy as np
 import qmcpy as qp 
 
 
-class DummyDiscreteDistrib(qp.discrete_distribution.AbstractDiscreteDistribution):
+class DummyDiscreteDistrib(qp.discrete_distribution.abstract_discrete_distribution.AbstractDiscreteDistribution):
     def __init__(self, x):
         assert isinstance(x,np.ndarray)
         self.x = x
