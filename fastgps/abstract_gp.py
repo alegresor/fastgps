@@ -75,6 +75,9 @@ class AbstractGP(torch.nn.Module):
         assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(derivatives[i]) for i in range(self.num_tasks))
         self.derivatives_cross = [[[None,None] for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
         self.derivatives_coeffs_cross = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
+        self.derivatives_flag = any((derivatives_i!=0).any() for derivatives_i in derivatives) 
+        if not self.derivatives_flag:
+            assert all((derivatives_coeffs_i==1).all() for derivatives_coeffs_i in derivatives_coeffs) 
         for l0 in range(self.num_tasks):
             p0r = torch.arange(len(derivatives_coeffs[l0]),device=self.device)
             for l1 in range(l0+1):
@@ -140,6 +143,7 @@ class AbstractGP(torch.nn.Module):
             verbose:int = 5,
             verbose_indent:int = 4,
             cv_weights:torch.Tensor = 1,
+            update_prior_mean:bool = True,
             ):
         """
         Args:
@@ -153,6 +157,7 @@ class AbstractGP(torch.nn.Module):
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
             cv_weights (Union[str,torch.Tensor]): weights for cross validation
+            update_prior_mean (bool): if `True`, then update the prior mean to optimize the loss.
             
         Returns:
             hist_data (dict): iteration history data.
@@ -181,6 +186,7 @@ class AbstractGP(torch.nn.Module):
             hist_data["iteration"] = []
             hist_data["loss"] = []
             hist_data["best_loss"] = []
+            hist_data["prior_mean"] = []
             for pname in self.batch_param_names:
                 hist_data[pname] = []
             for pname in self.kernel.batch_param_names:
@@ -190,7 +196,7 @@ class AbstractGP(torch.nn.Module):
         else:
             hist_data = {}
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"best loss","loss","term1","term2")
+            _s = "%16s | %-10s | %-10s"%("iter of %.1e"%iterations,"best loss","loss")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         stop_crit_best_loss = torch.inf 
@@ -198,27 +204,14 @@ class AbstractGP(torch.nn.Module):
         stop_crit_iterations_without_improvement_loss = 0
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         inv_log_det_cache = self.get_inv_log_det_cache()
+        update_prior_mean = update_prior_mean and (not self.derivatives_flag) and loss_metric!="CV"
         for i in range(iterations+1):
-            if loss_metric=="GCV":
-                numer,denom = inv_log_det_cache.get_gcv_numer_denom()
-                term1 = numer 
-                term2 = denom
-                loss = (term1/term2).sum()
-            elif loss_metric=="MLL":
-                norm_term,logdet = inv_log_det_cache.get_norm_term_logdet_term()
-                d_out = norm_term.numel()
-                term1 = norm_term.sum()
-                mll_const = d_out*self.n.sum()*np.log(2*np.pi)
-                term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-                loss = 1/2*(term1+term2+mll_const)
+            if loss_metric=="MLL":
+                loss = inv_log_det_cache.compute_mll_loss(update_prior_mean)
+            elif loss_metric=="GCV":
+                loss = inv_log_det_cache.gcv_loss(update_prior_mean)
             elif loss_metric=="CV":
-                coeffs = self.coeffs
-                del os.environ["FASTGP_FORCE_RECOMPILE"]
-                inv_diag = inv_log_det_cache.get_inv_diag()
-                os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
-                term1 = term2 = torch.nan*torch.ones(1)
-                squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
-                loss = squared_sums.sum().real
+                loss = inv_log_det_cache.cv_loss(cv_weights,update_prior_mean)
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -234,6 +227,7 @@ class AbstractGP(torch.nn.Module):
                 hist_data["iteration"].append(i)
                 hist_data["loss"].append(loss.item())
                 hist_data["best_loss"].append(stop_crit_best_loss)
+                hist_data["prior_mean"].append(self.prior_mean.clone())
                 for pname in self.batch_param_names:
                     hist_data[pname].append(getattr(self,pname).data.detach().clone().cpu())
                 for pname in self.kernel.batch_param_names:
@@ -241,7 +235,7 @@ class AbstractGP(torch.nn.Module):
                 for pname in self.kernel.base_kernel.batch_param_names:
                     hist_data[pname].append(getattr(self.kernel.base_kernel,pname).data.detach().clone().cpu())
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
+                _s = "%16.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
             # with torch.autograd.set_detect_anomaly(True):
@@ -254,6 +248,7 @@ class AbstractGP(torch.nn.Module):
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
             hist_data["loss"] = torch.tensor(hist_data["loss"])
             hist_data["best_loss"] = torch.tensor(hist_data["best_loss"])
+            hist_data["prior_mean"] = torch.stack(hist_data["prior_mean"],dim=0)
             for pname in self.batch_param_names:
                 hist_data[pname] = torch.stack(hist_data[pname],dim=0)
             for pname in self.kernel.batch_param_names:

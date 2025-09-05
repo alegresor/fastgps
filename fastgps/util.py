@@ -177,22 +177,22 @@ class _StandardInverseLogDetCache(_AbstractCache):
     def __call__(self):
         if not hasattr(self,"thetainv") or not self._frozen_equal() or self._force_recompile():
             kmat_tasks = self.fgp.kernel.taskmat
-            kmat_lower_tri = [[self.fgp.kernel.base_kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],*self.fgp.derivatives_cross[l0][l1],self.fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
+            kmat_lower_tri = [[kmat_tasks[...,l0,l1,None,None]*self.fgp.kernel.base_kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],*self.fgp.derivatives_cross[l0][l1],self.fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
             if self.fgp.adaptive_nugget:
                 assert self.fgp.noise.size(-1)==1
                 n0range = torch.arange(self.n[0],device=self.fgp.device)
                 tr00 = kmat_lower_tri[0][0][...,n0range,n0range].sum(-1)
             spd_factor = 1.
             while True:
+                noise_ls = [None]*self.fgp.num_tasks
                 for l in range(self.fgp.num_tasks):
                     if self.fgp.adaptive_nugget:
                         nlrange = torch.arange(self.n[l],device=self.fgp.device)
                         trll = kmat_lower_tri[l][l][...,nlrange,nlrange].sum(-1)
-                        noise_l = self.fgp.noise[...,0]*trll/tr00
+                        noise_ls[l] = self.fgp.noise[...,0]*trll/tr00
                     else:
-                        noise_l = self.fgp.noise[...,0]
-                    kmat_lower_tri[l][l] = kmat_lower_tri[l][l]+spd_factor*noise_l[...,None,None]*torch.eye(self.n[l],device=self.fgp.device)
-                kmat_full = [[kmat_tasks[...,l0,l1,None,None]*(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1)) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+                        noise_ls[l] = self.fgp.noise[...,0]
+                kmat_full = [[(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1))+(0 if l1!=l0 else (spd_factor*noise_ls[l0][...,None,None]*torch.eye(self.n[l0],device=self.fgp.device))) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
                 kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
                 try:
                     l_chol = torch.linalg.cholesky(kmat,upper=False)
@@ -218,26 +218,65 @@ class _StandardInverseLogDetCache(_AbstractCache):
         thetainv,logdet = self()
         v = torch.einsum("...ij,...j->...i",thetainv,y)
         return v
-    def get_norm_term_logdet_term(self):
-        delta = torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1)
+    def compute_mll_loss(self, update_prior_mean):
         thetainv,logdet = self()
+        y = torch.cat(self.fgp._y,dim=-1) 
+        if update_prior_mean:
+            rhs = torch.einsum("...ij,...j->...i",thetainv,y).split(self.n.tolist(),dim=-1)
+            rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+            thetainv_split = [thetinv_i.split(self.n.tolist(),dim=-1) for thetinv_i in thetainv.split(self.n.tolist(),dim=-2)]
+            tasksums = torch.cat([torch.cat([thetainv_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+            self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+        delta = y.clone()
+        for i in range(self.fgp.num_tasks):
+            delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
         v = torch.einsum("...ij,...j->...i",thetainv,delta)
         norm_term = (delta*v).sum(-1,keepdim=True)
-        return norm_term,logdet[...,None]
-    def get_gcv_numer_denom(self):
+        logdet = logdet[...,None]
+        d_out = norm_term.numel()
+        term1 = norm_term.sum()
+        mll_const = d_out*self.fgp.n.sum()*np.log(2*np.pi)
+        term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+        mll_loss = 1/2*(term1+term2+mll_const)
+        return mll_loss
+    def gcv_loss(self, update_prior_mean):
         thetainv,logdet = self()
-        delta = torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1)
-        v = torch.einsum("...ij,...j->...i",thetainv,delta)
-        numer = (v**2).sum(-1,keepdim=True)
+        y = torch.cat(self.fgp._y,dim=-1) 
+        thetainv2 = torch.einsum("...ij,...jk->...ik",thetainv,thetainv)
+        if update_prior_mean:
+            rhs = torch.einsum("...ij,...j->...i",thetainv2,y).split(self.n.tolist(),dim=-1)
+            rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+            thetainv2_split = [thetinv2_i.split(self.n.tolist(),dim=-1) for thetinv2_i in thetainv2.split(self.n.tolist(),dim=-2)]
+            tasksums = torch.cat([torch.cat([thetainv2_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+            self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+        delta = y.clone()
+        for i in range(self.fgp.num_tasks):
+            delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
+        v = torch.einsum("...ij,...j->...i",thetainv2,delta)
+        numer = (v*delta).sum(-1,keepdim=True)
         tr_k_inv = torch.einsum("...ii",thetainv)[...,None]
         denom = (tr_k_inv/thetainv.size(-1))**2
-        return numer,denom
-    def get_inv_diag(self):
-        # right now this costs costs O(n^3), maybe it can be done faster?
+        gcv_loss = (numer/denom).sum()
+        return gcv_loss
+    def cv_loss(self, cv_weights, update_prior_mean):
         thetainv,logdet = self()
+        y = torch.cat(self.fgp._y,dim=-1) 
         nrange = torch.arange(thetainv.size(-1),device=self.fgp.device)
-        inv_diag = thetainv[...,nrange,nrange]
-        return inv_diag
+        diag = cv_weights/thetainv[...,nrange,nrange]**2
+        cmat = torch.einsum("...ij,...jk->...ik",thetainv,diag[...,None]*thetainv)
+        if update_prior_mean:
+            rhs = torch.einsum("...ij,...j->...i",cmat,y).split(self.n.tolist(),dim=-1)
+            rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+            cmat_split = [cmat_i.split(self.n.tolist(),dim=-1) for cmat_i in cmat.split(self.n.tolist(),dim=-2)]
+            tasksums = torch.cat([torch.cat([cmat_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+            self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+        delta = y.clone()
+        for i in range(self.fgp.num_tasks):
+            delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
+        v = torch.einsum("...ij,...j->...i",cmat,delta)
+        cv_losses = (v*delta).sum(-1)
+        cv_loss = cv_losses.sum()
+        return cv_loss
     
 class _FastInverseLogDetCache(_AbstractCache):
     def __init__(self, fgp, n):
@@ -255,7 +294,7 @@ class _FastInverseLogDetCache(_AbstractCache):
                 for l1 in range(l0,self.fgp.num_tasks):
                     to1 = self.task_order[l1]
                     lam = self.fgp.get_lam(to0,to1,n[l0]) if to0<=to1 else self.fgp.get_lam(to1,to0,n[l0]).conj()
-                    lams[l0,l1] = torch.sqrt(n[l1])*lam
+                    lams[l0,l1] = kmat_tasks[...,to0,to1,None]*torch.sqrt(n[l1])*lam
             if self.fgp.adaptive_nugget:
                 tr00 = lams[self.inv_task_order[0],self.inv_task_order[0]].sum(-1)
                 for l in range(self.fgp.num_tasks):
@@ -264,11 +303,6 @@ class _FastInverseLogDetCache(_AbstractCache):
             else:
                 for l in range(self.fgp.num_tasks):
                     lams[l,l] = lams[l,l]+self.fgp.noise
-            for l0 in range(self.fgp.num_tasks):
-                to0 = self.task_order[l0]
-                for l1 in range(l0,self.fgp.num_tasks):
-                    to1 = self.task_order[l1]
-                    lams[l0,l1] = lams[l0,l1]*kmat_tasks[...,to0,to1,None]
             self.logdet = torch.log(torch.abs(lams[0,0])).sum(-1)
             A = (1/lams[0,0])[...,None,None,:]
             for l in range(1,self.fgp.num_tasks):
@@ -309,10 +343,13 @@ class _FastInverseLogDetCache(_AbstractCache):
             self.inv = A
         return self.inv,self.logdet
     def gram_matrix_solve(self, y):
+        inv,logdet = self()
+        return self._gram_matrix_solve(y,inv)
+    def _gram_matrix_solve(self, y, inv):
         assert y.size(-1)==self.n.sum() 
         ys = y.split(self.n.tolist(),dim=-1)
         yst = [self.fgp.ft(ys[i]) for i in range(self.fgp.num_tasks)]
-        yst,_,_ = self._gram_matrix_solve_tilde_to_tilde(yst)
+        yst = self._gram_matrix_solve_tilde_to_tilde(yst,inv)
         ys = [self.fgp.ift(yst[i]).real for i in range(self.fgp.num_tasks)]
         y = torch.cat(ys,dim=-1)
         if os.environ.get("FASTGP_DEBUG")=="True":
@@ -324,8 +361,7 @@ class _FastInverseLogDetCache(_AbstractCache):
             ytrue = torch.linalg.solve(kmat,y)
             assert torch.allclose(ytrue,y,atol=1e-3)
         return y
-    def _gram_matrix_solve_tilde_to_tilde(self, zst):
-        inv,logdet = self()
+    def _gram_matrix_solve_tilde_to_tilde(self, zst, inv):
         zsto = [zst[o] for o in self.task_order]
         z = torch.cat(zsto,dim=-1)
         z = z.reshape(list(zsto[0].shape[:-1])+[1,-1,self.n[self.n>0].min()])
@@ -333,41 +369,69 @@ class _FastInverseLogDetCache(_AbstractCache):
         z = z.reshape(list(z.shape[:-2])+[-1])
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
-        return zst,inv,logdet
-    def get_norm_term_logdet_term(self):
+        return zst
+    def compute_mll_loss(self, update_prior_mean):
+        inv,logdet = self()
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
+        sqrtn = torch.sqrt(self.fgp.n)
+        if update_prior_mean:
+            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+            to = self.task_order
+            ito = self.inv_task_order
+            nord = self.fgp.n[to]
+            mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+            tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
+            self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
-        deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-torch.sqrt(self.fgp.n)*self.fgp.prior_mean
-        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1))
+        deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-sqrtn*self.fgp.prior_mean
+        ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
         ztildescat = torch.cat(ztildes,dim=-1)
         norm_term = (deltatildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
-        return norm_term,logdet[...,None]
-    def get_gcv_numer_denom(self):
+        logdet = logdet[...,None]
+        d_out = norm_term.numel()
+        term1 = norm_term.sum()
+        mll_const = d_out*self.fgp.n.sum()*np.log(2*np.pi)
+        term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+        mll_loss = 1/2*(term1+term2+mll_const)
+        return mll_loss
+    def gcv_loss(self, update_prior_mean):
+        inv,logdet = self()
         ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
+        sqrtn = torch.sqrt(self.fgp.n)
+        if update_prior_mean:
+            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+            rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
+            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+            to = self.task_order
+            ito = self.inv_task_order
+            nord = self.fgp.n[to]
+            mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+            inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
+            tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
+            self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-torch.sqrt(self.fgp.n)*self.fgp.prior_mean
-        ztildes,inv,logdet = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1))
+        ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
         ztildescat = torch.cat(ztildes,dim=-1)
         numer = (ztildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
         n = inv.size(-2)
         nrange = torch.arange(n,device=self.fgp.device)
         tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1,keepdim=True)
         denom = ((tr_k_inv/self.n.sum())**2).real
-        return numer,denom
-    def get_inv_diag(self):
+        gcv_loss = (numer/denom).sum()
+        return gcv_loss
+    def cv_loss(self, cv_weights, update_prior_mean):
+        assert not update_prior_mean, "fast GP updates to prior mean with CV loss not yet worked out"
         if self.fgp.num_tasks==1:
-            lam = self.fgp.get_lam(0,0)
-            rootn = np.sqrt(lam.size(-1))
-            inv_diag = (1/(lam*rootn)).mean(-1,keepdim=True)
-        else:
-            # there should be a more efficient way than this current O(n^2 log n) approach 
             inv,logdet = self()
-            nsum = self.fgp.n.sum()
-            eye = torch.eye(nsum,device=self.fgp.device).reshape([nsum]+[1]*(inv.ndim-3)+[nsum])
-            kmatinv = self.gram_matrix_solve(eye).permute([1+i for i in range(inv.ndim-3)]+[0,-1])
-            nrange = torch.arange(kmatinv.size(-1),device=self.fgp.device)
-            inv_diag = kmatinv[...,nrange,nrange]
-        return inv_diag
+            coeffs = self._gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1),inv)
+            inv_diag = inv[0,0].sum()/self.fgp.n
+            squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
+            cv_loss = squared_sums.sum().real
+        else:
+            assert False, "fast multitask GPs do not yet support efficient CV loss computation"
+        return cv_loss
 
 class _CoeffsCache(_AbstractCache):
     def __init__(self, fgp):
