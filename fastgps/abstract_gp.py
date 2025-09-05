@@ -203,8 +203,8 @@ class AbstractGP(torch.nn.Module):
         stop_crit_save_loss = torch.inf 
         stop_crit_iterations_without_improvement_loss = 0
         os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
-        inv_log_det_cache = self.get_inv_log_det_cache()
         update_prior_mean = update_prior_mean and (not self.derivatives_flag) and loss_metric!="CV"
+        inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
             if loss_metric=="MLL":
                 loss = inv_log_det_cache.compute_mll_loss(update_prior_mean)
@@ -216,7 +216,7 @@ class AbstractGP(torch.nn.Module):
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
                 stop_crit_best_loss = loss.item()
-                best_params = OrderedDict([(pname,pval.clone()) for pname,pval in self.state_dict().items()])
+                best_params = (self.prior_mean.clone().detach(),OrderedDict([(pname,pval.clone()) for pname,pval in self.state_dict().items()]))
             if (stop_crit_save_loss-loss.item())>logtol:
                 stop_crit_iterations_without_improvement_loss = 0
                 stop_crit_save_loss = stop_crit_best_loss
@@ -242,7 +242,8 @@ class AbstractGP(torch.nn.Module):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-        self.load_state_dict(best_params)
+        self.prior_mean = best_params[0]
+        self.load_state_dict(best_params[1])
         del os.environ["FASTGP_FORCE_RECOMPILE"]
         if store_hists:
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
@@ -297,7 +298,7 @@ class AbstractGP(torch.nn.Module):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
         shape_batch = list(self._y[0].shape[:-1])
         if (self.n==0).all() and len(shape_batch)>0:
-            self.prior_mean = self.zeros(shape_batch+[self.num_tasks],device=self.device)
+            self.prior_mean = torch.zeros(shape_batch+[self.num_tasks],device=self.device)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
         self.m = torch.where(self.n==0,-1,torch.log2(self.n).round()).to(int) # round to avoid things like torch.log2(torch.tensor([2**3],dtype=torch.int64,device="cuda")).item() = 2.9999999999999996
         self.n_cumsum = torch.hstack([torch.zeros(1,dtype=self.n.dtype,device=self.n.device),self.n.cumsum(0)[:-1]])

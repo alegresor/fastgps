@@ -425,7 +425,7 @@ class _FastInverseLogDetCache(_AbstractCache):
         assert not update_prior_mean, "fast GP updates to prior mean with CV loss not yet worked out"
         if self.fgp.num_tasks==1:
             inv,logdet = self()
-            coeffs = self._gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1),inv)
+            coeffs = self._gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1),inv)
             inv_diag = inv[0,0].sum()/self.fgp.n
             squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
             cv_loss = squared_sums.sum().real
@@ -439,7 +439,7 @@ class _CoeffsCache(_AbstractCache):
     def __call__(self):
         if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
             inv_log_det_cache = self.fgp.get_inv_log_det_cache()
-            self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i] for i in range(self.fgp.num_tasks)],dim=-1))
+            self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1))
             self._freeze()
             self.n = self.fgp.n.clone()
         return self.coeffs  
