@@ -10,7 +10,6 @@ from .abstract_gp import AbstractGP
 
 class AbstractFastGP(AbstractGP):
     def __init__(self,
-            alpha,
             ft,
             ift,
             omega,
@@ -18,11 +17,6 @@ class AbstractFastGP(AbstractGP):
             **kwargs
         ):
         super().__init__(*args,**kwargs)
-        # alpha
-        assert (np.isscalar(alpha) and alpha%1==0) or (isinstance(alpha,torch.Tensor) and alpha.shape==(self.d,)), "alpha should be an int or a torch.Tensor of length d"
-        if np.isscalar(alpha):
-            alpha = int(alpha)*torch.ones(self.d,dtype=int,device=self.device)
-        self.alpha = alpha
         # fast transforms 
         self.ft_unstable = ft
         self.ift_unstable = ift
@@ -169,30 +163,6 @@ class AbstractFastGP(AbstractGP):
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache()
-    def _kernel_parts(self, x, z, beta0, beta1):
-        assert x.size(-1)==self.d and z.size(-1)==self.d and beta0.ndim==2 and beta0.size(1)==self.d and beta1.ndim==2 and beta1.size(1)==self.d
-        delta = self._ominus(x,z)
-        parts = torch.empty(list(delta.shape)[:-1]+[len(beta0),len(beta1)]+[delta.size(-1)],device=self.device)
-        for _t0 in range(len(beta0)):
-            for _t1 in range(len(beta1)):
-                parts[...,_t0,_t1,:] = self._kernel_parts_from_delta(delta,beta0[_t0],beta1[_t1])
-        return parts
-    def _kernel_from_parts(self, parts, beta0, beta1, c0, c1):
-        assert c0.ndim==1 and c1.ndim==1
-        assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
-        assert parts.shape[-3:]==(len(c0),len(c1),self.d)
-        ndim = parts.ndim
-        scale = self.scale.reshape(self.scale.shape+torch.Size([1]*(ndim-2))) 
-        lengthscales = self.lengthscales.reshape(self.lengthscales.shape[:-1]+torch.Size([1]*(ndim-1)+[self.lengthscales.size(-1)]))
-        ind = ((beta0[:,None,:]+beta1[None,:,:])==0).to(torch.int64)
-        terms = scale*(ind+lengthscales*parts).prod(-1)
-        vals = ((terms*c1).sum(-1)*c0).sum(-1)
-        return vals
-    def _kernel(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor, beta1:torch.Tensor, c0:torch.Tensor, c1:torch.Tensor):
-        assert c0.ndim==1 and c1.ndim==1
-        assert beta0.shape==(len(c0),self.d) and beta1.shape==(len(c1),self.d)
-        assert x.size(-1)==self.d and z.size(-1)==self.d
-        return self._kernel_from_parts(self._kernel_parts(x,z,beta0,beta1),beta0,beta1,c0,c1)
     def ft(self, x):
         """
         One dimensional fast transform along the last dimenions. 

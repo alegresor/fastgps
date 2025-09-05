@@ -614,17 +614,3 @@ class AbstractGP(torch.nn.Module):
         assert n>=0
         x,xb = self.xxb_seqs[task][:n]
         return xb
-    def kernel_abstracted(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor=None, beta1:torch.Tensor=None, c0:torch.Tensor=None, c1:torch.Tensor=None):
-        assert isinstance(x,torch.Tensor) and x.size(-1)==self.d
-        assert isinstance(z,torch.Tensor) and z.size(-1)==self.d
-        if beta0 is None: beta0 = torch.zeros((1,self.d),dtype=int,device=self.device)
-        if beta0.shape==(len(beta0),): beta0 = beta0[None,:]
-        assert isinstance(beta0,torch.Tensor) and beta0.ndim==2 and beta0.size(1)==self.d 
-        if beta1 is None: beta1 = torch.zeros((1,self.d),dtype=int,device=self.device)
-        if beta1.shape==(len(beta1),): beta1 = beta1[None,:]
-        assert isinstance(beta1,torch.Tensor) and beta1.ndim==2 and beta1.size(1)==self.d 
-        if c0 is None: c0 = torch.ones(len(beta0),device=self.device)
-        assert isinstance(c0,torch.Tensor) and c0.shape==(beta0.size(0),)
-        if c1 is None: c1 = torch.ones(len(beta1),device=self.device)
-        assert isinstance(c1,torch.Tensor) and c1.shape==(beta1.size(0),)
-        return self._kernel(x,z,beta0,beta1,c0,c1)

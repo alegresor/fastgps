@@ -151,7 +151,6 @@ class FastGPLattice(AbstractFastGP):
     def __init__(self,
             kernel:qmcpy.KernelShiftInvar,
             seqs:qmcpy.Lattice,
-            alpha:int = 2,
             noise:float = 2*qmcpy.util.transforms.EPS64, 
             tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
             requires_grad_noise:bool = False, 
@@ -169,7 +168,6 @@ class FastGPLattice(AbstractFastGP):
                 [qmcpy.Lattice(d,seed=seed_i,randomize="SHIFT") for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
                 ```
                 See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.lattice.lattice" target="_blank">`qmcpy.Lattice` docs</a> for more info
-            alpha (int): smoothness parameter
             noise (float): positive noise variance i.e. nugget term
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
@@ -207,7 +205,6 @@ class FastGPLattice(AbstractFastGP):
         ift = qmcpy.ifftbr_torch
         omega = qmcpy.omega_fftbr_torch
         super().__init__(
-            alpha,
             ft,
             ift,
             omega,
@@ -224,10 +221,3 @@ class FastGPLattice(AbstractFastGP):
             derivatives_coeffs,
             adaptive_nugget,
         )
-    def _kernel_parts_from_delta(self, delta, beta, kappa):
-        assert delta.size(-1)==self.d and beta.shape==(self.d,) and kappa.shape==(self.d,)
-        beta_plus_kappa = beta+kappa
-        order = 2*self.alpha-beta_plus_kappa
-        assert (2<=order).all(), "order must all be at least 2, but got order = %s"%str(order)
-        coeff = (-1)**(self.alpha+kappa+1)*torch.exp(2*self.alpha*np.log(2*np.pi)-torch.lgamma(order+1))
-        return coeff*torch.stack([qmcpy.kernel_methods.bernoulli_poly(order[j].item(),delta[...,j]) for j in range(self.d)],-1)

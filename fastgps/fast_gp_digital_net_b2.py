@@ -146,7 +146,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
     def __init__(self,
             kernel:qmcpy.KernelDigShiftInvar,
             seqs:Union[qmcpy.DigitalNetB2,int],
-            alpha:int = 2,
             noise:float = 2*qmcpy.util.transforms.EPS64,
             tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
             requires_grad_noise:bool = False, 
@@ -213,7 +212,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
         ift = ft = qmcpy.fwht_torch
         omega = qmcpy.omega_fwht_torch
         super().__init__(
-            alpha,
             ft,
             ift,
             omega,
@@ -230,21 +228,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives_coeffs,
             adaptive_nugget,
         )
-        assert (1<=self.alpha).all() and (self.alpha<=4).all()
     def _sample(self, seq, n_min, n_max):
         _x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
         x = qmcpy.util.dig_shift_invar_ops.to_float(_x,self.t)
         return x,_x
-    def _kernel_parts_from_delta(self, delta, beta, kappa):
-        assert delta.size(-1)==self.d and beta.shape==(self.d,) and kappa.shape==(self.d,)
-        beta_plus_kappa = beta+kappa
-        ind = (beta_plus_kappa>0).to(torch.int64)
-        order = self.alpha-beta_plus_kappa
-        assert (1<=order).all() and (order<=4).all(), "order must all be between 2 and 4, but got order = %s. Try increasing alpha"%str(order)
-        omega = torch.empty(delta.shape,device=self.device) 
-        for j in range(self.d):
-            if order[j]==1:
-                omega[...,j] = 6*(1/6-2**(torch.log2(delta[...,j]).floor()-self.t-1))
-            else:
-                omega[...,j] = qmcpy.kernel_methods.weighted_walsh_funcs(order[j].item(),delta[...,j],self.t)-1
-        return (-2)**beta_plus_kappa*(ind+omega)

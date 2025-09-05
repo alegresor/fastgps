@@ -352,14 +352,6 @@ class _FastInverseLogDetCache(_AbstractCache):
         yst = self._gram_matrix_solve_tilde_to_tilde(yst,inv)
         ys = [self.fgp.ift(yst[i]).real for i in range(self.fgp.num_tasks)]
         y = torch.cat(ys,dim=-1)
-        if os.environ.get("FASTGP_DEBUG")=="True":
-            _,logdet = self()
-            kmat_tasks = self.fgp.gram_matrix_tasks
-            kmat = torch.vstack([torch.hstack([kmat_tasks[ell0,ell1]*self.fgp._kernel(self.fgp.get_x(ell0,self.n[ell0])[:,None,:],self.fgp.get_x(ell1,self.n[ell1])[None,:,:]) for ell1 in range(self.fgp.num_tasks)]) for ell0 in range(self.fgp.num_tasks)])
-            kmat += self.fgp.noise*torch.eye(kmat.size(0))
-            assert torch.allclose(logdet,torch.logdet(kmat),rtol=1e-3)
-            ytrue = torch.linalg.solve(kmat,y)
-            assert torch.allclose(ytrue,y,atol=1e-3)
         return y
     def _gram_matrix_solve_tilde_to_tilde(self, zst, inv):
         zsto = [zst[o] for o in self.task_order]
