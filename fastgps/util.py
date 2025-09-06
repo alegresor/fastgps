@@ -77,6 +77,7 @@ class _LamCaches(object):
         self.m_min,self.m_max = -1,-1
         self.raw_scale_freeze_list = [None]
         self.raw_lengthscales_freeze_list = [None]
+        self.raw_alpha_freeze_list = [None]
         self.raw_noise_freeze_list = [None]
         self._freeze(0)
         self.lam_list = [torch.empty(0,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device)]
@@ -84,15 +85,18 @@ class _LamCaches(object):
         return (
             (self.fgp.kernel.base_kernel.raw_scale==self.raw_scale_freeze_list[i]).all() and 
             (self.fgp.kernel.base_kernel.raw_lengthscales==self.raw_lengthscales_freeze_list[i]).all() and 
+            (self.fgp.kernel.base_kernel.raw_alpha==self.raw_alpha_freeze_list[i]).all() and 
             (self.fgp.raw_noise==self.raw_noise_freeze_list[i]).all())
     def _force_recompile(self):
         return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
             self.fgp.kernel.base_kernel.raw_scale.requires_grad or 
             self.fgp.kernel.base_kernel.raw_lengthscales.requires_grad or 
+            self.fgp.kernel.base_kernel.raw_alpha.requires_grad or 
             self.fgp.raw_noise.requires_grad)
     def _freeze(self, i):
         self.raw_scale_freeze_list[i] = self.fgp.kernel.base_kernel.raw_scale.clone()
         self.raw_lengthscales_freeze_list[i] = self.fgp.kernel.base_kernel.raw_lengthscales.clone()
+        self.raw_alpha_freeze_list[i] = self.fgp.kernel.base_kernel.raw_alpha.clone()
         self.raw_noise_freeze_list[i] = self.fgp.raw_noise.clone()
     def __getitem__no_delete(self, m):
         if isinstance(m,torch.Tensor):
@@ -118,6 +122,7 @@ class _LamCaches(object):
             self.lam_list += [torch.empty(2**mm,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device) for mm in range(self.m_max+1,m+1)]
             self.raw_scale_freeze_list += [torch.empty_like(self.raw_scale_freeze_list[0])]*(m-self.m_max)
             self.raw_lengthscales_freeze_list += [torch.empty_like(self.raw_lengthscales_freeze_list[0])]*(m-self.m_max)
+            self.raw_alpha_freeze_list += [torch.empty_like(self.raw_alpha_freeze_list[0])]*(m-self.m_max)
             self.raw_noise_freeze_list += [torch.empty_like(self.raw_noise_freeze_list[0])]*(m-self.m_max)
             self.m_max = m
         midx = m-self.m_min
@@ -137,6 +142,7 @@ class _LamCaches(object):
             del self.lam_list[0]
             del self.raw_scale_freeze_list[0]
             del self.raw_lengthscales_freeze_list[0]
+            del self.raw_alpha_freeze_list[0]
             del self.raw_noise_freeze_list[0]
             self.m_min += 1
         return lam
