@@ -40,7 +40,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.0319)
+        tensor(0.0308)
         >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y)
         True
 
@@ -92,7 +92,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0268)
+        tensor(0.0267)
 
         >>> torch.allclose(fgp.post_cov(x,z),pcov_future)
         True
@@ -103,13 +103,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0255)
+        tensor(0.0254)
 
         >>> x_next = fgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0163)
+        tensor(0.0162)
 
         >>> data = fgp.fit(verbose=False)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)

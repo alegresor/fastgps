@@ -40,21 +40,21 @@ class FastGPLattice(AbstractFastGP):
         >>> pmean.shape
         torch.Size([128])
         >>> torch.linalg.norm(y-pmean)/torch.linalg.norm(y)
-        tensor(0.0348)
+        tensor(0.0334)
         >>> torch.allclose(fgp.post_mean(fgp.x),fgp.y,atol=1e-3)
         True
 
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(6.9917e-09)
+        tensor(1.2005e-09)
 
         >>> data = fgp.fit(verbose=0)
         >>> list(data.keys())
         []
 
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0363)
+        tensor(0.0360)
         >>> z = torch.rand((2**8,d),generator=rng).to(device)
         >>> pcov = fgp.post_cov(x,z)
         >>> pcov.shape
@@ -81,13 +81,13 @@ class FastGPLattice(AbstractFastGP):
         >>> fgp.post_cubature_mean()
         tensor(20.1842)
         >>> fgp.post_cubature_var()
-        tensor(3.4254e-06)
+        tensor(2.8903e-06)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = fgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.1795)
+        tensor(20.1798)
         >>> pcci_high
-        tensor(20.1890)
+        tensor(20.1886)
 
         >>> pcov_future = fgp.post_cov(x,z,n=2*n)
         >>> pvar_future = fgp.post_var(x,n=2*n)
@@ -97,7 +97,7 @@ class FastGPLattice(AbstractFastGP):
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-fgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0345)
+        tensor(0.0295)
 
         >>> torch.allclose(fgp.post_cov(x,z),pcov_future)
         True

@@ -92,7 +92,7 @@ class AbstractGP(torch.nn.Module):
                     self.derivatives_cross[l1][l0][1] = self.derivatives_cross[l0][l1][0]
                     self.derivatives_coeffs_cross[l1][l0] = self.derivatives_coeffs_cross[l0][l1]
         # noise
-        self.raw_noise,self.tf_noise = self.kernel.parse_assign_param(
+        self.raw_noise = self.kernel.parse_assign_param(
             pname = "noise",
             param = noise,
             shape_param = shape_noise,
@@ -100,6 +100,7 @@ class AbstractGP(torch.nn.Module):
             tfs_param = tfs_noise,
             endsize_ops = [1],
             constraints = ["POSITIVE"])
+        self.tfs_noise = tfs_noise
         self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
@@ -578,7 +579,7 @@ class AbstractGP(torch.nn.Module):
         """
         Noise parameter.
         """
-        return self.tf_noise(self.raw_noise)
+        return self.tfs_noise[1](self.raw_noise)
     @property 
     def coeffs(self):
         r"""
