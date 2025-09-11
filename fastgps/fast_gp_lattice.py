@@ -149,7 +149,7 @@ class FastGPLattice(AbstractFastGP):
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
     """
     def __init__(self,
-            kernel:qmcpy.KernelShiftInvar,
+            kernel:Union[qmcpy.KernelShiftInvar,qmcpy.KernelShiftInvarCombined],
             seqs:qmcpy.Lattice,
             noise:float = 2*qmcpy.util.transforms.EPS64, 
             tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
@@ -161,7 +161,7 @@ class FastGPLattice(AbstractFastGP):
             ):
         """
         Args:
-            kernel (qmcpy.KernelShiftInvar): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
+            kernel (qmcpy.KernelShiftInvar,qmcpy.KernelShiftInvarCombined): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
             seqs ([int,qmcpy.Lattice,List]): list of lattice sequence generators
                 with order="RADICAL INVERSE" and randomize in `["FALSE","SHIFT"]`. If an int `seed` is passed in we use 
                 ```python

@@ -48,7 +48,7 @@ class _K1PartsSeq(object):
         assert beta.shape==kappa.shape
         self.beta = beta 
         self.kappa = kappa
-        self.k1parts = torch.empty((0,len(self.kappa),self.fgp.d),device=self.fgp.device)
+        self.k1parts = None
         self.n = 0
     def __getitem__(self, i):
         if isinstance(i,int): i = slice(None,i,None)
@@ -60,7 +60,10 @@ class _K1PartsSeq(object):
             _,xb_next = self.xxb_seq_first[self.n:i.stop]
             _,xb0 = self.xxb_seq_second[:1]
             k1parts_next = self.fgp.kernel.base_kernel.get_per_dim_components(xb_next,xb0,self.beta,self.kappa)
-            self.k1parts = torch.cat([self.k1parts,k1parts_next],dim=0)
+            if self.k1parts is None:
+                self.k1parts = k1parts_next 
+            else:
+                self.k1parts = torch.cat([self.k1parts,k1parts_next],dim=0)
             self.n = i.stop
         return self.k1parts[i]
 

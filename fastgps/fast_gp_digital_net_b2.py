@@ -144,7 +144,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
     """
     def __init__(self,
-            kernel:qmcpy.KernelDigShiftInvar,
+            kernel:Union[qmcpy.KernelDigShiftInvar,qmcpy.KernelDigShiftInvarAdaptiveAlpha,qmcpy.KernelDigShiftInvarCombined],
             seqs:Union[qmcpy.DigitalNetB2,int],
             noise:float = 2*qmcpy.util.transforms.EPS64,
             tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
@@ -156,7 +156,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             ):
         """
         Args:
-            kernel (qmcpy.KernelDigShiftInvar): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
+            kernel (Union[qmcpy.KernelDigShiftInvar,qmcpy.KernelDigShiftInvarAdaptiveAlpha,qmcpy.KernelDigShiftInvarCombined]): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
             seqs (Union[int,qmcpy.DigitalNetB2,List]]): list of digital sequence generators in base $b=2$ 
                 with order="RADICAL INVERSE" and randomize in `["FALSE","DS"]`. If an int `seed` is passed in we use 
                 ```python
