@@ -1,7 +1,7 @@
 from .abstract_fast_gp import AbstractFastGP
 import torch
 import numpy as np
-import qmcpy
+import qmcpy as qp
 from typing import Tuple,Union
 
 class FastGPDigitalNetB2(AbstractFastGP):
@@ -26,8 +26,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> n = 2**10
         >>> d = 2
         >>> fgp = FastGPDigitalNetB2(
-        ...     qmcpy.KernelDigShiftInvar(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelDigShiftInvar(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = fgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> fgp.add_y_next(y_next)
@@ -133,8 +133,8 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> n = 2**6
         >>> d = 3
         >>> sgp = FastGPDigitalNetB2(
-        ...     qmcpy.KernelDigShiftInvar(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelDigShiftInvar(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
         >>> sgp.add_y_next(y_next)
@@ -144,10 +144,10 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
     """
     def __init__(self,
-            kernel:Union[qmcpy.KernelDigShiftInvar,qmcpy.KernelDigShiftInvarAdaptiveAlpha,qmcpy.KernelDigShiftInvarCombined],
-            seqs:Union[qmcpy.DigitalNetB2,int],
-            noise:float = 2*qmcpy.util.transforms.EPS64,
-            tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
+            kernel:Union[qp.KernelDigShiftInvar,qp.KernelDigShiftInvarAdaptiveAlpha,qp.KernelDigShiftInvarCombined],
+            seqs:Union[qp.DigitalNetB2,int],
+            noise:float = 2*qp.util.transforms.EPS64,
+            tfs_noise:Tuple[callable,callable] = (qp.util.transforms.tf_exp_eps_inv,qp.util.transforms.tf_exp_eps),
             requires_grad_noise:bool = False, 
             shape_noise:torch.Size = torch.Size([1]),
             derivatives:list = None,
@@ -156,13 +156,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
             ):
         """
         Args:
-            kernel (Union[qmcpy.KernelDigShiftInvar,qmcpy.KernelDigShiftInvarAdaptiveAlpha,qmcpy.KernelDigShiftInvarCombined]): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
-            seqs (Union[int,qmcpy.DigitalNetB2,List]]): list of digital sequence generators in base $b=2$ 
+            kernel (Union[qp.KernelDigShiftInvar,qp.KernelDigShiftInvarAdaptiveAlpha,qp.KernelDigShiftInvarCombined]): Kernel object. Set to `qp.KernelMultiTask` for a multi-task GP.
+            seqs (Union[int,qp.DigitalNetB2,List]]): list of digital sequence generators in base $b=2$ 
                 with order="RADICAL INVERSE" and randomize in `["FALSE","DS"]`. If an int `seed` is passed in we use 
                 ```python
-                [qmcpy.DigitalNetB2(d,seed=seed_i,randomize="DS") for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
+                [qp.DigitalNetB2(d,seed=seed_i,randomize="DS") for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
                 ```
-                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#module-qmcpy.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qmcpy.DigitalNetB2` docs</a> for more info. 
+                See the <a href="https://qp.readthedocs.io/en/latest/algorithms.html#module-qp.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qp.DigitalNetB2` docs</a> for more info. 
                 If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS DS"]`. 
             alpha (int): smoothness parameter
             noise (float): positive noise variance i.e. nugget term
@@ -178,7 +178,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
         """
         self._XBDTYPE = torch.int64
         self._FTOUTDTYPE = torch.get_default_dtype()
-        if isinstance(kernel,qmcpy.KernelMultiTask):
+        if isinstance(kernel,qp.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks
             default_task = torch.arange(num_tasks)
@@ -188,13 +188,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
             num_tasks = 1
         if isinstance(seqs,int):
             global_seed = seqs
-            seqs = np.array([qmcpy.DigitalNetB2(kernel.d,seed=seed,randomize="DS") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
-        if isinstance(seqs,qmcpy.DigitalNetB2):
+            seqs = np.array([qp.DigitalNetB2(kernel.d,seed=seed,randomize="DS") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
+        if isinstance(seqs,qp.DigitalNetB2):
             seqs = np.array([seqs],dtype=object)
         if isinstance(seqs,list):
             seqs = np.array(seqs,dtype=object)
         assert seqs.shape==(num_tasks,), "seqs should be a length num_tasks=%d list"%num_tasks
-        assert all(isinstance(seqs[i],qmcpy.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qmcpy.DigitalNetB2 instances"
+        assert all(isinstance(seqs[i],qp.DigitalNetB2) for i in range(num_tasks)), "each seq should be a qp.DigitalNetB2 instances"
         assert all(seqs[i].order=="RADICAL INVERSE" for i in range(num_tasks)), "each seq should be in 'RADICAL INVERSE' order "
         assert all(seqs[i].replications==1 for i in range(num_tasks)) and "each seq should have only 1 replication"
         if num_tasks==1:
@@ -205,12 +205,12 @@ class FastGPDigitalNetB2(AbstractFastGP):
         assert (ts<64).all(), "each seq must have t<64"
         assert (ts==ts[0]).all(), "all seqs should have the same t"
         self.t = ts[0].item()
-        if isinstance(kernel,qmcpy.KernelMultiTask):
+        if isinstance(kernel,qp.KernelMultiTask):
             kernel.base_kernel.set_t(self.t)
         else:
             kernel.set_t(self.t)
-        ift = ft = qmcpy.fwht_torch
-        omega = qmcpy.omega_fwht_torch
+        ift = ft = qp.fwht_torch
+        omega = qp.omega_fwht_torch
         super().__init__(
             ft,
             ift,
@@ -230,5 +230,5 @@ class FastGPDigitalNetB2(AbstractFastGP):
         )
     def _sample(self, seq, n_min, n_max):
         _x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
-        x = qmcpy.util.dig_shift_invar_ops.to_float(_x,self.t)
+        x = qp.util.dig_shift_invar_ops.to_float(_x,self.t)
         return x,_x

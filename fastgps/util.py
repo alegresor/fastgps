@@ -1,7 +1,7 @@
 import torch 
 import os 
 import numpy as np 
-import qmcpy as qp 
+import qmcpy as qp
 
 
 class DummyDiscreteDistrib(qp.discrete_distribution.abstract_discrete_distribution.AbstractDiscreteDistribution):

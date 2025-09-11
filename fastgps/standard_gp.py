@@ -5,7 +5,7 @@ from .util import (
 )
 import torch
 import numpy as np
-import qmcpy
+import qmcpy as qp
 from typing import Tuple,Union
 
 class StandardGP(AbstractGP):
@@ -30,8 +30,8 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 2
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelSquaredExponential(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelSquaredExponential(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
@@ -139,8 +139,8 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 3
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelSquaredExponential(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelSquaredExponential(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
         >>> sgp.add_y_next(y_next)
@@ -160,8 +160,8 @@ class StandardGP(AbstractGP):
         ...     torch.stack([4*torch.sin(2*np.pi*x[1][:,0]),4*torch.cos(2*np.pi*x[1][:,0]),4*torch.acos(x[1][:,0])],dim=0).to(device),
         ... ]
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelMultiTask(
-        ...         qmcpy.KernelGaussian(d=1,torchify=True,device=device),
+        ...     qp.KernelMultiTask(
+        ...         qp.KernelGaussian(d=1,torchify=True,device=device),
         ...         num_tasks = 2,
         ...     ),
         ...     seqs={"x":x,"y":y},
@@ -173,10 +173,10 @@ class StandardGP(AbstractGP):
         >>> pcmean,pcvar,q,pcci_low,pcci_high =  sgp.post_cubature_ci()
     """
     def __init__(self,
-            kernel:qmcpy.kernel.abstract_kernel.AbstractKernel,
-            seqs:Union[qmcpy.IIDStdUniform,int],
+            kernel:qp.kernel.abstract_kernel.AbstractKernel,
+            seqs:Union[qp.IIDStdUniform,int],
             noise:float = 1e-4,
-            tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
+            tfs_noise:Tuple[callable,callable] = (qp.util.transforms.tf_exp_eps_inv,qp.util.transforms.tf_exp_eps),
             requires_grad_noise:bool = False, 
             shape_noise:torch.Size = torch.Size([1]),
             derivatives:list = None,
@@ -186,12 +186,12 @@ class StandardGP(AbstractGP):
             ):
         """
         Args:
-            kernel (qmcpy.AbstractKernel): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
-            seqs (Union[int,qmcpy.DiscreteDistribution,List]]): list of sequence generators. If an int `seed` is passed in we use 
+            kernel (qp.AbstractKernel): Kernel object. Set to `qp.KernelMultiTask` for a multi-task GP.
+            seqs (Union[int,qp.DiscreteDistribution,List]]): list of sequence generators. If an int `seed` is passed in we use 
                 ```python
-                [qmcpy.DigitalNetB2(d,seed=seed_i) for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
+                [qp.DigitalNetB2(d,seed=seed_i) for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
                 ```
-                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#discrete-distribution-class" target="_blank">`qmcpy.DiscreteDistribution` docs</a> for more info. 
+                See the <a href="https://qp.readthedocs.io/en/latest/algorithms.html#discrete-distribution-class" target="_blank">`qp.DiscreteDistribution` docs</a> for more info. 
             noise (float): positive noise variance i.e. nugget term
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
@@ -206,7 +206,7 @@ class StandardGP(AbstractGP):
         """
         self._XBDTYPE = torch.get_default_dtype()
         self._FTOUTDTYPE = torch.get_default_dtype()
-        if isinstance(kernel,qmcpy.KernelMultiTask):
+        if isinstance(kernel,qp.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks
             default_task = torch.arange(num_tasks)
@@ -226,8 +226,8 @@ class StandardGP(AbstractGP):
             data = None
             if isinstance(seqs,int):
                 global_seed = seqs
-                seqs = np.array([qmcpy.DigitalNetB2(kernel.d,seed=seed,order="GRAY") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
-            if isinstance(seqs,qmcpy.DiscreteDistribution):
+                seqs = np.array([qp.DigitalNetB2(kernel.d,seed=seed,order="GRAY") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
+            if isinstance(seqs,qp.DiscreteDistribution):
                 seqs = np.array([seqs],dtype=object)
             if isinstance(seqs,list):
                 seqs = np.array(seqs,dtype=object)

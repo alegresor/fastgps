@@ -4,7 +4,7 @@ from .util import (
 )
 import torch
 import numpy as np 
-import qmcpy 
+import qmcpy as qp 
 import scipy.stats 
 import os
 from typing import Union,List
@@ -47,16 +47,16 @@ class AbstractGP(torch.nn.Module):
         self.solo_task = solo_task
         self.task_range = torch.arange(num_tasks,device=self.device)
         if solo_task:
-            self.kernel = qmcpy.KernelMultiTask(
+            self.kernel = qp.KernelMultiTask(
                 base_kernel = self.kernel,
                 num_tasks = 1, 
                 factor = 1.,
                 diag =  0.,
                 requires_grad_factor = False, 
                 requires_grad_diag = False,
-                tfs_diag = (qmcpy.util.transforms.tf_identity,qmcpy.util.transforms.tf_identity),
+                tfs_diag = (qp.util.transforms.tf_identity,qp.util.transforms.tf_identity),
                 rank_factor = 1)
-        assert isinstance(self.kernel,qmcpy.KernelMultiTask)
+        assert isinstance(self.kernel,qp.KernelMultiTask)
         # seqs setup 
         assert isinstance(seqs,np.ndarray) and seqs.shape==(self.num_tasks,)
         assert all(seqs[i].d==self.d for i in range(self.num_tasks))
