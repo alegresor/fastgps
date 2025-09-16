@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Union,List
 from .abstract_gp import AbstractGP
-from .util import _freeze,_frozen_equal,_force_recompile,_FastInverseLogDetCache
+from .util import _freeze,_frozen_equal,_force_recompile,_FastInverseLogDetCache,_LamCaches
 import os 
 
 class AbstractFastGP(AbstractGP):
@@ -21,91 +21,9 @@ class AbstractFastGP(AbstractGP):
         # storage and dynamic caches
         self.k1parts = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
         self.n_k1parts = np.array([[0 if l1>=l0 else -1 for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=int)
-        self.lam_caches = np.array([[self._LamCaches(self,l0,l1,*self.derivatives_cross[l0][l1],self.derivatives_coeffs_cross[l0][l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
+        self.lam_caches = np.array([[_LamCaches(self,l0,l1,*self.derivatives_cross[l0][l1],self.derivatives_coeffs_cross[l0][l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.ytilde = [None]*self.num_tasks
         self.n_ytilde = np.zeros(self.num_tasks,dtype=int)
-    class _LamCaches(object):
-        def __init__(self, fgp, l0, l1, beta0, beta1, c):
-            self.fgp = fgp
-            self.l0 = l0
-            self.l1 = l1
-            assert c.ndim==1
-            assert beta0.shape==(len(c),self.fgp.d) and beta1.shape==(len(c),self.fgp.d)
-            self.c = c 
-            self.beta0 = beta0 
-            self.beta1 = beta1
-            self.m_min,self.m_max = -1,-1
-            self.raw_scale_freeze_list = [None]
-            self.raw_lengthscales_freeze_list = [None]
-            self.raw_alpha_freeze_list = [None]
-            self.raw_noise_freeze_list = [None]
-            self._freeze(0)
-            self.lam_list = [torch.empty(0,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device)]
-        def _frozen_equal(self, i):
-            return (
-                (self.fgp.kernel.base_kernel.raw_scale==self.raw_scale_freeze_list[i]).all() and 
-                (self.fgp.kernel.base_kernel.raw_lengthscales==self.raw_lengthscales_freeze_list[i]).all() and 
-                (self.fgp.kernel.base_kernel.raw_alpha==self.raw_alpha_freeze_list[i]).all() and 
-                (self.fgp.raw_noise==self.raw_noise_freeze_list[i]).all())
-        def _force_recompile(self):
-            return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and (
-                self.fgp.kernel.base_kernel.raw_scale.requires_grad or 
-                self.fgp.kernel.base_kernel.raw_lengthscales.requires_grad or 
-                self.fgp.kernel.base_kernel.raw_alpha.requires_grad or 
-                self.fgp.raw_noise.requires_grad)
-        def _freeze(self, i):
-            self.raw_scale_freeze_list[i] = self.fgp.kernel.base_kernel.raw_scale.clone()
-            self.raw_lengthscales_freeze_list[i] = self.fgp.kernel.base_kernel.raw_lengthscales.clone()
-            self.raw_alpha_freeze_list[i] = self.fgp.kernel.base_kernel.raw_alpha.clone()
-            self.raw_noise_freeze_list[i] = self.fgp.raw_noise.clone()
-        def __getitem__no_delete(self, m):
-            if isinstance(m,torch.Tensor):
-                assert m.numel()==1 and isinstance(m,torch.int64)
-                m = m.item()
-            assert isinstance(m,int)
-            assert m>=self.m_min, "old lambda are not retained after updating"
-            if self.m_min==-1 and m>=0:
-                batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
-                k1 = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params)
-                self.lam_list = [self.fgp.ft(k1)]
-                self._freeze(0)
-                self.m_min = self.m_max = m
-                return self.lam_list[0]
-            if m==self.m_min:
-                if not self._frozen_equal(0) or self._force_recompile():
-                    batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
-                    k1 = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params)
-                    self.lam_list[0] = self.fgp.ft(k1)
-                    self._freeze(0)
-                return self.lam_list[0]
-            if m>self.m_max:
-                self.lam_list += [torch.empty(2**mm,dtype=self.fgp._FTOUTDTYPE,device=self.fgp.device) for mm in range(self.m_max+1,m+1)]
-                self.raw_scale_freeze_list += [torch.empty_like(self.raw_scale_freeze_list[0])]*(m-self.m_max)
-                self.raw_lengthscales_freeze_list += [torch.empty_like(self.raw_lengthscales_freeze_list[0])]*(m-self.m_max)
-                self.raw_alpha_freeze_list += [torch.empty_like(self.raw_alpha_freeze_list[0])]*(m-self.m_max)
-                self.raw_noise_freeze_list += [torch.empty_like(self.raw_noise_freeze_list[0])]*(m-self.m_max)
-                self.m_max = m
-            midx = m-self.m_min
-            if not self._frozen_equal(midx) or self._force_recompile():
-                omega_m = self.fgp.omega(m-1).to(self.fgp.device)
-                batch_params = self.fgp.kernel.base_kernel.get_batch_params(1)
-                k1_m = self.fgp.kernel.base_kernel.combine_per_dim_components(self.fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params)
-                lam_m = self.fgp.ft(k1_m)
-                omega_lam_m = omega_m*lam_m
-                lam_m_prev = self.__getitem__no_delete(m-1)
-                self.lam_list[midx] = torch.cat([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m],-1)/np.sqrt(2)
-                self._freeze(midx)
-            return self.lam_list[midx]
-        def __getitem__(self, m):
-            lam = self.__getitem__no_delete(m)
-            while self.m_min<max(self.fgp.m[self.l0],self.fgp.m[self.l1]):
-                del self.lam_list[0]
-                del self.raw_scale_freeze_list[0]
-                del self.raw_lengthscales_freeze_list[0]
-                del self.raw_alpha_freeze_list[0]
-                del self.raw_noise_freeze_list[0]
-                self.m_min += 1
-            return lam
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         n_og = n 
         if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
@@ -231,7 +149,7 @@ class AbstractFastGP(AbstractGP):
         assert 0<=task1<self.num_tasks
         if n is None: m = int(self.m[task0])
         else: m = -1 if n==0 else int(np.log2(int(n)))
-        return self.lam_caches[task0,task1][m]
+        return self.lam_caches[task0,task1].getitem(self,m)
     def get_k1parts(self, task0, task1, i=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks
