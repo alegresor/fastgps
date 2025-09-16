@@ -22,7 +22,8 @@ class AbstractFastGP(AbstractGP):
         self.k1parts = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
         self.n_k1parts = np.array([[0 if l1>=l0 else -1 for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=int)
         self.lam_caches = np.array([[self._LamCaches(self,l0,l1,*self.derivatives_cross[l0][l1],self.derivatives_coeffs_cross[l0][l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
-        self.ytilde_cache = np.array([self._YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
+        self.ytilde = [None]*self.num_tasks
+        self.n_ytilde = np.zeros(self.num_tasks,dtype=int)
     class _LamCaches(object):
         def __init__(self, fgp, l0, l1, beta0, beta1, c):
             self.fgp = fgp
@@ -105,26 +106,6 @@ class AbstractFastGP(AbstractGP):
                 del self.raw_noise_freeze_list[0]
                 self.m_min += 1
             return lam
-    class _YtildeCache(object):
-        def __init__(self, fgp, l):
-            self.fgp = fgp
-            self.l = l
-        def __call__(self):
-            if not hasattr(self,"ytilde") or self.fgp.n[self.l]<=1:
-                self.ytilde = self.fgp.ft(self.fgp._y[self.l]) if self.fgp.n[self.l]>1 else self.fgp._y[self.l].clone().to(self.fgp._FTOUTDTYPE)
-                self.n = self.fgp.n[self.l].item()
-                return self.ytilde
-            while self.n!=self.fgp.n[self.l]:
-                n_double = 2*self.n
-                ytilde_next = self.fgp.ft(self.fgp._y[self.l][...,self.n:n_double])
-                omega_m = self.fgp.omega(int(np.log2(self.n))).to(self.fgp.device)
-                omega_ytilde_next = omega_m*ytilde_next
-                self.ytilde = torch.cat([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next],-1)/np.sqrt(2)
-                if os.environ.get("FASTGP_DEBUG")=="True":
-                    ytilde_ref = self.fgp.ft(self.fgp._y[self.l][:n_double])
-                    assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
-                self.n = n_double
-            return self.ytilde
     class _FastInverseLogDetCache:
         def __init__(self, fgp, n):
             self.fgp = fgp
@@ -419,7 +400,18 @@ class AbstractFastGP(AbstractGP):
         return self.k1parts[task0][task1][i]
     def get_ytilde(self, task):
         assert 0<=task<self.num_tasks
-        return self.ytilde_cache[task]()
+        if self.ytilde[task] is None or self.n_ytilde[task]<=1:
+            self.ytilde[task] = self.ft(self._y[task]) if self.n[task]>1 else self._y[task].clone().to(self._FTOUTDTYPE)
+            self.n_ytilde[task] = self.n[task].item()
+            return self.ytilde[task]
+        while self.n_ytilde[task]!=self.n[task]:
+            n_double = 2*self.n_ytilde[task]
+            ytilde_next = self.ft(self._y[task][...,self.n_ytilde[task]:n_double])
+            omega_m = self.omega(int(np.log2(self.n_ytilde[task]))).to(self.device)
+            omega_ytilde_next = omega_m*ytilde_next
+            self.ytilde[task] = torch.cat([self.ytilde[task]+omega_ytilde_next,self.ytilde[task]-omega_ytilde_next],-1)/np.sqrt(2)
+            self.n_ytilde[task] = n_double
+        return self.ytilde[task]
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache()
