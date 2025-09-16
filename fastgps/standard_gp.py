@@ -1,13 +1,15 @@
 from .abstract_gp import AbstractGP
 from .util import (
+    _AbstractCache,
     DummyDiscreteDistrib,
-    _StandardInverseLogDetCache,
 )
 import torch
 import numpy as np
 import qmcpy as qp
 from typing import Tuple,Union
 
+
+    
 class StandardGP(AbstractGP):
     """
     Standard Gaussian process regression
@@ -254,8 +256,115 @@ class StandardGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = _StandardInverseLogDetCache(self,n)
+            self.inv_log_det_cache_dict[ntup] = self._StandardInverseLogDetCache(self,n)
         return self.inv_log_det_cache_dict[ntup]
+    class _StandardInverseLogDetCache(_AbstractCache):
+        def __init__(self, fgp, n):
+            self.fgp = fgp
+            self.n = n
+        def __call__(self):
+            if not hasattr(self,"thetainv") or not self._frozen_equal() or self._force_recompile():
+                kmat_tasks = self.fgp.kernel.taskmat
+                kmat_lower_tri = [[kmat_tasks[...,l0,l1,None,None]*self.fgp.kernel.base_kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],*self.fgp.derivatives_cross[l0][l1],self.fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
+                if self.fgp.adaptive_nugget:
+                    assert self.fgp.noise.size(-1)==1
+                    n0range = torch.arange(self.n[0],device=self.fgp.device)
+                    tr00 = kmat_lower_tri[0][0][...,n0range,n0range].sum(-1)
+                spd_factor = 1.
+                while True:
+                    noise_ls = [None]*self.fgp.num_tasks
+                    for l in range(self.fgp.num_tasks):
+                        if self.fgp.adaptive_nugget:
+                            nlrange = torch.arange(self.n[l],device=self.fgp.device)
+                            trll = kmat_lower_tri[l][l][...,nlrange,nlrange].sum(-1)
+                            noise_ls[l] = self.fgp.noise[...,0]*trll/tr00
+                        else:
+                            noise_ls[l] = self.fgp.noise[...,0]
+                    kmat_full = [[(kmat_lower_tri[l0][l1] if l1<=l0 else kmat_lower_tri[l1][l0].transpose(dim0=-2,dim1=-1))+(0 if l1!=l0 else (spd_factor*noise_ls[l0][...,None,None]*torch.eye(self.n[l0],device=self.fgp.device))) for l1 in range(self.fgp.num_tasks)] for l0 in range(self.fgp.num_tasks)]
+                    kmat = torch.cat([torch.cat(kmat_full[l0],dim=-1) for l0 in range(self.fgp.num_tasks)],dim=-2)
+                    try:
+                        l_chol = torch.linalg.cholesky(kmat,upper=False)
+                        break
+                    except torch._C._LinAlgError as e:
+                        expected_str = "linalg.cholesky: The factorization could not be completed because the input is not positive-definite"
+                        if str(e)[:len(expected_str)]!=expected_str: raise
+                        spd_factor *= 2#raise Exception("Cholesky factor not SPD, try increasing noise")
+                nfrange = torch.arange(self.n.sum(),device=self.fgp.device)
+                self.logdet = 2*torch.log(l_chol[...,nfrange,nfrange]).sum(-1)
+                try:
+                    self.thetainv = torch.cholesky_inverse(l_chol,upper=False)
+                except NotImplementedError as e:
+                    expected_str = "The operator 'aten::cholesky_inverse' is not currently implemented for the MPS device."
+                    if str(e)[:len(expected_str)]!=expected_str: raise
+                    eye = torch.eye(l_chol.size(-1),device=l_chol.device)
+                    l_chol_inv = torch.linalg.solve_triangular(l_chol,eye,upper=False)
+                    self.thetainv = torch.einsum("...ji,...jk->...ik",l_chol_inv,l_chol_inv)
+                self._freeze()
+            return self.thetainv,self.logdet
+        def gram_matrix_solve(self, y):
+            assert y.size(-1)==self.n.sum()
+            thetainv,logdet = self()
+            v = torch.einsum("...ij,...j->...i",thetainv,y)
+            return v
+        def compute_mll_loss(self, update_prior_mean):
+            thetainv,logdet = self()
+            y = torch.cat(self.fgp._y,dim=-1) 
+            if update_prior_mean:
+                rhs = torch.einsum("...ij,...j->...i",thetainv,y).split(self.n.tolist(),dim=-1)
+                rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+                thetainv_split = [thetinv_i.split(self.n.tolist(),dim=-1) for thetinv_i in thetainv.split(self.n.tolist(),dim=-2)]
+                tasksums = torch.cat([torch.cat([thetainv_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+                self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            delta = y.clone()
+            for i in range(self.fgp.num_tasks):
+                delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
+            v = torch.einsum("...ij,...j->...i",thetainv,delta)
+            norm_term = (delta*v).sum(-1,keepdim=True)
+            logdet = logdet[...,None]
+            d_out = norm_term.numel()
+            term1 = norm_term.sum()
+            mll_const = d_out*self.fgp.n.sum()*np.log(2*np.pi)
+            term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
+            mll_loss = 1/2*(term1+term2+mll_const)
+            return mll_loss
+        def gcv_loss(self, update_prior_mean):
+            thetainv,logdet = self()
+            y = torch.cat(self.fgp._y,dim=-1) 
+            thetainv2 = torch.einsum("...ij,...jk->...ik",thetainv,thetainv)
+            if update_prior_mean:
+                rhs = torch.einsum("...ij,...j->...i",thetainv2,y).split(self.n.tolist(),dim=-1)
+                rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+                thetainv2_split = [thetinv2_i.split(self.n.tolist(),dim=-1) for thetinv2_i in thetainv2.split(self.n.tolist(),dim=-2)]
+                tasksums = torch.cat([torch.cat([thetainv2_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+                self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            delta = y.clone()
+            for i in range(self.fgp.num_tasks):
+                delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
+            v = torch.einsum("...ij,...j->...i",thetainv2,delta)
+            numer = (v*delta).sum(-1,keepdim=True)
+            tr_k_inv = torch.einsum("...ii",thetainv)[...,None]
+            denom = (tr_k_inv/thetainv.size(-1))**2
+            gcv_loss = (numer/denom).sum()
+            return gcv_loss
+        def cv_loss(self, cv_weights, update_prior_mean):
+            thetainv,logdet = self()
+            y = torch.cat(self.fgp._y,dim=-1) 
+            nrange = torch.arange(thetainv.size(-1),device=self.fgp.device)
+            diag = cv_weights/thetainv[...,nrange,nrange]**2
+            cmat = torch.einsum("...ij,...jk->...ik",thetainv,diag[...,None]*thetainv)
+            if update_prior_mean:
+                rhs = torch.einsum("...ij,...j->...i",cmat,y).split(self.n.tolist(),dim=-1)
+                rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
+                cmat_split = [cmat_i.split(self.n.tolist(),dim=-1) for cmat_i in cmat.split(self.n.tolist(),dim=-2)]
+                tasksums = torch.cat([torch.cat([cmat_split[i][j].sum((-2,-1),keepdim=True) for j in range(self.fgp.num_tasks)],dim=-1) for i in range(self.fgp.num_tasks)],dim=-2)
+                self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            delta = y.clone()
+            for i in range(self.fgp.num_tasks):
+                delta[...,self.fgp.n_cumsum[i]:(self.fgp.n_cumsum[i]+self.fgp.n[i])] -= self.fgp.prior_mean[...,i,None]
+            v = torch.einsum("...ij,...j->...i",cmat,delta)
+            cv_losses = (v*delta).sum(-1)
+            cv_loss = cv_losses.sum()
+            return cv_loss
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
         coeffs = self.coeffs
         if eval:
@@ -285,7 +394,7 @@ class StandardGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
         v = inv_log_det_cache.gram_matrix_solve(kints.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task,task)
         pcvar = tval-(kints*v).sum(-1)
@@ -313,8 +422,8 @@ class StandardGP(AbstractGP):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(task0,task1)
-        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
         v = inv_log_det_cache.gram_matrix_solve(kints1.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task0[:,None],task1[None,:])
         pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)

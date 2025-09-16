@@ -1,6 +1,5 @@
 from .util import (
-    _XXbSeq,
-    _CoeffsCache,
+    _AbstractCache,
 )
 import torch
 import numpy as np 
@@ -104,8 +103,10 @@ class AbstractGP(torch.nn.Module):
         self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
-        self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
-        self.coeffs_cache = _CoeffsCache(self)
+        self._x = [torch.empty((0,seqs[i].d),device=self.device) for i in range(self.num_tasks)]
+        self._xb = [torch.empty((0,seqs[i].d),device=self.device,dtype=self._XBDTYPE) for i in range(self.num_tasks)]
+        self.n_x = torch.zeros(self.num_tasks,dtype=int)
+        self.coeffs_cache = self._CoeffsCache(self)
         self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
         if any((derivatives[i]>0).any() or (derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
@@ -114,6 +115,16 @@ class AbstractGP(torch.nn.Module):
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
+    class _CoeffsCache(_AbstractCache):
+        def __init__(self, fgp):
+            self.fgp = fgp
+        def __call__(self):
+            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
+                inv_log_det_cache = self.fgp.get_inv_log_det_cache()
+                self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1))
+                self._freeze()
+                self.n = self.fgp.n.clone()
+            return self.coeffs  
     def save_params(self, path):
         """ Save the state dict to path 
         
@@ -280,7 +291,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
-        x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
+        x_next = [self.get_x(l,slice(self.n[l],n[i])) for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
@@ -360,7 +371,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
         kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
-        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
         kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
         t_perm = inv_log_det_cache.gram_matrix_solve(kmat_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -405,8 +416,8 @@ class AbstractGP(torch.nn.Module):
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(x0,x1) and torch.equal(task0,task1)
         kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
-        kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
-        kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
+        kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+        kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
         kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
         t_perm = inv_log_det_cache.gram_matrix_solve(kmat2_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
@@ -603,15 +614,25 @@ class AbstractGP(torch.nn.Module):
         A `list` for multitask problems.
         """
         return self._y[0] if self.solo_task else self._y 
-    def get_x(self, task, n=None):
+    def get_x_xb(self, task, i=None):
         assert 0<=task<self.num_tasks
-        if n is None: n = self.n[task]
-        assert n>=0
-        x,xb = self.xxb_seqs[task][:n]
-        return x
-    def get_xb(self, task, n=None):
-        assert 0<=task<self.num_tasks
-        if n is None: n = self.n[task]
-        assert n>=0
-        x,xb = self.xxb_seqs[task][:n]
-        return xb
+        if i is None: i = self.n[task]
+        if isinstance(i,int): i = slice(None,i,None)
+        if isinstance(i,torch.Tensor):
+            assert i.numel()==1 and i%1==0
+            i = slice(None,int(i.item()),None)
+        assert isinstance(i,slice)
+        if i.stop>self.n_x[task]:
+            x_next,xb_next = self._sample(self.seqs[task],self.n_x[task],i.stop)
+            if x_next.data_ptr()==xb_next.data_ptr():
+                self._x[task] = self._xb[task] = torch.vstack([self._x[task],x_next])
+            else:
+                self._x[task] = torch.vstack([self._x[task],x_next])
+                self._xb[task] = torch.vstack([self._xb[task],xb_next])
+            self.n_x[task] = i.stop
+        return self._x[task][i],self._xb[task][i]
+    def get_x(self, task, i=None):
+        return self.get_x_xb(task=task,i=i)[0]
+    def get_xb(self, task, i=None):
+        return self.get_x_xb(task=task,i=i)[1]
+    
