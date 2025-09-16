@@ -119,10 +119,10 @@ class AbstractGP(torch.nn.Module):
         def __init__(self, fgp):
             self.fgp = fgp
         def __call__(self):
-            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal() or self._force_recompile():
+            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal(self.fgp) or self._force_recompile(self.fgp):
                 inv_log_det_cache = self.fgp.get_inv_log_det_cache()
                 self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1))
-                self._freeze()
+                self._freeze(self.fgp)
                 self.n = self.fgp.n.clone()
             return self.coeffs  
     def save_params(self, path):

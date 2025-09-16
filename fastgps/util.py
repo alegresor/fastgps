@@ -16,10 +16,10 @@ class DummyDiscreteDistrib(qp.discrete_distribution.abstract_discrete_distributi
         return self.x[None]
     
 class _AbstractCache(object):
-    def _frozen_equal(self):
-        return not any((self.state_dict[pname]!=pval).any() for pname,pval in self.fgp.named_parameters())
-    def _force_recompile(self):
-        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and any(pval.requires_grad for pname,pval in self.fgp.named_parameters())
-    def _freeze(self):
-        self.state_dict = {pname:pval.data.detach().clone() for pname,pval in self.fgp.state_dict().items()}
+    def _frozen_equal(self, fgp):
+        return not any((self.state_dict[pname]!=pval).any() for pname,pval in fgp.named_parameters())
+    def _force_recompile(self, fgp):
+        return os.environ.get("FASTGP_FORCE_RECOMPILE")=="True" and any(pval.requires_grad for pname,pval in fgp.named_parameters())
+    def _freeze(self, fgp):
+        self.state_dict = {pname:pval.data.detach().clone() for pname,pval in fgp.state_dict().items()}
 

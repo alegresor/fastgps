@@ -132,7 +132,7 @@ class AbstractFastGP(AbstractGP):
             self.task_order = self.n.argsort(descending=True)
             self.inv_task_order = self.task_order.argsort()
         def __call__(self):
-            if not hasattr(self,"inv") or not self._frozen_equal() or self._force_recompile():
+            if not hasattr(self,"inv") or not self._frozen_equal(self.fgp) or self._force_recompile(self.fgp):
                 n = self.n[self.task_order]
                 kmat_tasks = self.fgp.kernel.taskmat
                 lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
@@ -186,7 +186,7 @@ class AbstractFastGP(AbstractGP):
                     assert torch.allclose(torch.logdet(lammat).real,self.logdet)
                     Afull = torch.vstack([torch.hstack([A[l0,l1]*torch.eye(A.size(-1)) for l1 in range(A.size(1))]) for l0 in range(A.size(0))])
                     assert torch.allclose(torch.linalg.inv(lammat),Afull,rtol=1e-4)
-                self._freeze()
+                self._freeze(self.fgp)
                 self.inv = A
             return self.inv,self.logdet
         def gram_matrix_solve(self, y):

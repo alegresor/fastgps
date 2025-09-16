@@ -263,7 +263,7 @@ class StandardGP(AbstractGP):
             self.fgp = fgp
             self.n = n
         def __call__(self):
-            if not hasattr(self,"thetainv") or not self._frozen_equal() or self._force_recompile():
+            if not hasattr(self,"thetainv") or not self._frozen_equal(self.fgp) or self._force_recompile(self.fgp):
                 kmat_tasks = self.fgp.kernel.taskmat
                 kmat_lower_tri = [[kmat_tasks[...,l0,l1,None,None]*self.fgp.kernel.base_kernel(self.fgp.get_x(l0,self.n[l0])[:,None,:],self.fgp.get_x(l1,self.n[l1])[None,:,:],*self.fgp.derivatives_cross[l0][l1],self.fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(self.fgp.num_tasks)]
                 if self.fgp.adaptive_nugget:
@@ -299,7 +299,7 @@ class StandardGP(AbstractGP):
                     eye = torch.eye(l_chol.size(-1),device=l_chol.device)
                     l_chol_inv = torch.linalg.solve_triangular(l_chol,eye,upper=False)
                     self.thetainv = torch.einsum("...ji,...jk->...ik",l_chol_inv,l_chol_inv)
-                self._freeze()
+                self._freeze(self.fgp)
             return self.thetainv,self.logdet
         def gram_matrix_solve(self, y):
             assert y.size(-1)==self.n.sum()
