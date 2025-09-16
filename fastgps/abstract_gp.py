@@ -1,5 +1,5 @@
 from .util import (
-    _AbstractCache,
+    _freeze,_frozen_equal,_force_recompile,
 )
 import torch
 import numpy as np 
@@ -115,14 +115,14 @@ class AbstractGP(torch.nn.Module):
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
-    class _CoeffsCache(_AbstractCache):
+    class _CoeffsCache(object):
         def __init__(self, fgp):
             self.fgp = fgp
         def __call__(self):
-            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not self._frozen_equal(self.fgp) or self._force_recompile(self.fgp):
+            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not _frozen_equal(self.fgp,self.state_dict) or _force_recompile(self.fgp):
                 inv_log_det_cache = self.fgp.get_inv_log_det_cache()
                 self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1))
-                self._freeze(self.fgp)
+                self.state_dict = _freeze(self.fgp)
                 self.n = self.fgp.n.clone()
             return self.coeffs  
     def save_params(self, path):

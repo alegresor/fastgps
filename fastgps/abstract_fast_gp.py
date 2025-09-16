@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Union,List
 from .abstract_gp import AbstractGP
-from .util import _AbstractCache
+from .util import _freeze,_frozen_equal,_force_recompile
 import os 
 
 class AbstractFastGP(AbstractGP):
@@ -125,14 +125,14 @@ class AbstractFastGP(AbstractGP):
                     assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
                 self.n = n_double
             return self.ytilde
-    class _FastInverseLogDetCache(_AbstractCache):
+    class _FastInverseLogDetCache:
         def __init__(self, fgp, n):
             self.fgp = fgp
             self.n = n
             self.task_order = self.n.argsort(descending=True)
             self.inv_task_order = self.task_order.argsort()
         def __call__(self):
-            if not hasattr(self,"inv") or not self._frozen_equal(self.fgp) or self._force_recompile(self.fgp):
+            if not hasattr(self,"inv") or not _frozen_equal(self.fgp,self.state_dict) or _force_recompile(self.fgp):
                 n = self.n[self.task_order]
                 kmat_tasks = self.fgp.kernel.taskmat
                 lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
@@ -186,7 +186,7 @@ class AbstractFastGP(AbstractGP):
                     assert torch.allclose(torch.logdet(lammat).real,self.logdet)
                     Afull = torch.vstack([torch.hstack([A[l0,l1]*torch.eye(A.size(-1)) for l1 in range(A.size(1))]) for l0 in range(A.size(0))])
                     assert torch.allclose(torch.linalg.inv(lammat),Afull,rtol=1e-4)
-                self._freeze(self.fgp)
+                self.state_dict = _freeze(self.fgp)
                 self.inv = A
             return self.inv,self.logdet
         def gram_matrix_solve(self, y):
