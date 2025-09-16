@@ -106,7 +106,6 @@ class AbstractGP(torch.nn.Module):
         self._x = [torch.empty((0,seqs[i].d),device=self.device) for i in range(self.num_tasks)]
         self._xb = [torch.empty((0,seqs[i].d),device=self.device,dtype=self._XBDTYPE) for i in range(self.num_tasks)]
         self.n_x = torch.zeros(self.num_tasks,dtype=int)
-        self.coeffs_cache = self._CoeffsCache(self)
         self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
         if any((derivatives[i]>0).any() or (derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
@@ -115,16 +114,6 @@ class AbstractGP(torch.nn.Module):
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
-    class _CoeffsCache(object):
-        def __init__(self, fgp):
-            self.fgp = fgp
-        def __call__(self):
-            if not hasattr(self,"coeffs") or (self.n!=self.fgp.n).any() or not _frozen_equal(self.fgp,self.state_dict) or _force_recompile(self.fgp):
-                inv_log_det_cache = self.fgp.get_inv_log_det_cache()
-                self.coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1))
-                self.state_dict = _freeze(self.fgp)
-                self.n = self.fgp.n.clone()
-            return self.coeffs  
     def save_params(self, path):
         """ Save the state dict to path 
         
@@ -596,7 +585,12 @@ class AbstractGP(torch.nn.Module):
         r"""
         Coefficients $\mathsf{K}^{-1} \boldsymbol{y}$.
         """
-        return self.coeffs_cache()
+        if not hasattr(self,"_coeffs") or (self.n_coeffs!=self.n).any() or not _frozen_equal(self,self.state_dict_coeffs) or _force_recompile(self):
+            inv_log_det_cache = self.get_inv_log_det_cache()
+            self._coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self._y[i]-self.prior_mean[...,i,None] for i in range(self.num_tasks)],dim=-1))
+            self.state_dict_coeffs = _freeze(self)
+            self.n_coeffs = self.n.clone()
+        return self._coeffs  
     @property
     def x(self):
         """
