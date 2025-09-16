@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Union,List
 from .abstract_gp import AbstractGP
-from .util import _freeze,_frozen_equal,_force_recompile
+from .util import _freeze,_frozen_equal,_force_recompile,_FastInverseLogDetCache
 import os 
 
 class AbstractFastGP(AbstractGP):
@@ -106,152 +106,6 @@ class AbstractFastGP(AbstractGP):
                 del self.raw_noise_freeze_list[0]
                 self.m_min += 1
             return lam
-    class _FastInverseLogDetCache:
-        def __init__(self, fgp, n):
-            self.fgp = fgp
-            self.n = n
-            self.task_order = self.n.argsort(descending=True)
-            self.inv_task_order = self.task_order.argsort()
-        def __call__(self):
-            if not hasattr(self,"inv") or not _frozen_equal(self.fgp,self.state_dict) or _force_recompile(self.fgp):
-                n = self.n[self.task_order]
-                kmat_tasks = self.fgp.kernel.taskmat
-                lams = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
-                for l0 in range(self.fgp.num_tasks):
-                    to0 = self.task_order[l0]
-                    for l1 in range(l0,self.fgp.num_tasks):
-                        to1 = self.task_order[l1]
-                        lam = self.fgp.get_lam(to0,to1,n[l0]) if to0<=to1 else self.fgp.get_lam(to1,to0,n[l0]).conj()
-                        lams[l0,l1] = kmat_tasks[...,to0,to1,None]*torch.sqrt(n[l1])*lam
-                if self.fgp.adaptive_nugget:
-                    tr00 = lams[self.inv_task_order[0],self.inv_task_order[0]].sum(-1)
-                    for l in range(self.fgp.num_tasks):
-                        trll = lams[l,l].sum(-1)
-                        lams[l,l] = lams[l,l]+self.fgp.noise*(trll/tr00).abs()
-                else:
-                    for l in range(self.fgp.num_tasks):
-                        lams[l,l] = lams[l,l]+self.fgp.noise
-                self.logdet = torch.log(torch.abs(lams[0,0])).sum(-1)
-                A = (1/lams[0,0])[...,None,None,:]
-                for l in range(1,self.fgp.num_tasks):
-                    if n[l]==0: break
-                    _B = torch.cat([lams[k,l] for k in range(l)],dim=-1)
-                    B = _B.reshape(_B.shape[:-1]+torch.Size([-1,n[l]]))
-                    Bvec = B.reshape(B.shape[:-2]+(1,A.size(-2),-1))
-                    _T = (Bvec*A).sum(-2)
-                    T = _T.reshape(_T.shape[:-2]+torch.Size([-1,n[l]]))
-                    M = (B.conj()*T).sum(-2)
-                    S = lams[l,l]-M
-                    self.logdet += torch.log(torch.abs(S)).sum(-1)
-                    P = T/S[...,None,:]
-                    C = P[...,:,None,:]*(T[...,None,:,:].conj())
-                    r = A.size(-1)//C.size(-1)
-                    ii = torch.arange(A.size(-2))
-                    jj = torch.arange(A.size(-1))
-                    ii0,ii1,ii2 = torch.meshgrid(ii,ii,jj,indexing="ij")
-                    ii0,ii1,ii2 = ii0.ravel(),ii1.ravel(),ii2.ravel()
-                    jj0 = ii2%C.size(-1)
-                    jj1 = ii2//C.size(-1)
-                    C[...,ii0*r+jj1,ii1*r+jj1,jj0] += A[...,ii0,ii1,ii2]
-                    ur = torch.cat([C,-P[...,:,None,:]],dim=-2)
-                    br = torch.cat([-P.conj()[...,None,:,:],1/S[...,None,None,:]],dim=-2)
-                    A = torch.cat([ur,br],dim=-3)
-                if os.environ.get("FASTGP_DEBUG")=="True":
-                    lammats = np.empty((self.fgp.num_tasks,self.fgp.num_tasks),dtype=object)
-                    for l0 in range(self.fgp.num_tasks):
-                        for l1 in range(l0,self.fgp.num_tasks):
-                            lammats[l0,l1] = (lams[l0,l1].reshape((-1,n[l1],1))*torch.eye(n[l1])).reshape((-1,n[l1]))
-                            if l0==l1: continue 
-                            lammats[l1,l0] = lammats[l0,l1].conj().transpose(dim0=-2,dim1=-1)
-                    lammat = torch.vstack([torch.hstack(lammats[i].tolist()) for i in range(self.fgp.num_tasks)])
-                    assert torch.allclose(torch.logdet(lammat).real,self.logdet)
-                    Afull = torch.vstack([torch.hstack([A[l0,l1]*torch.eye(A.size(-1)) for l1 in range(A.size(1))]) for l0 in range(A.size(0))])
-                    assert torch.allclose(torch.linalg.inv(lammat),Afull,rtol=1e-4)
-                self.state_dict = _freeze(self.fgp)
-                self.inv = A
-            return self.inv,self.logdet
-        def gram_matrix_solve(self, y):
-            inv,logdet = self()
-            return self._gram_matrix_solve(y,inv)
-        def _gram_matrix_solve(self, y, inv):
-            assert y.size(-1)==self.n.sum() 
-            ys = y.split(self.n.tolist(),dim=-1)
-            yst = [self.fgp.ft(ys[i]) for i in range(self.fgp.num_tasks)]
-            yst = self._gram_matrix_solve_tilde_to_tilde(yst,inv)
-            ys = [self.fgp.ift(yst[i]).real for i in range(self.fgp.num_tasks)]
-            y = torch.cat(ys,dim=-1)
-            return y
-        def _gram_matrix_solve_tilde_to_tilde(self, zst, inv):
-            zsto = [zst[o] for o in self.task_order]
-            z = torch.cat(zsto,dim=-1)
-            z = z.reshape(list(zsto[0].shape[:-1])+[1,-1,self.n[self.n>0].min()])
-            z = (z*inv).sum(-2)
-            z = z.reshape(list(z.shape[:-2])+[-1])
-            zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
-            zst = [zsto[o] for o in self.inv_task_order]
-            return zst
-        def compute_mll_loss(self, update_prior_mean):
-            inv,logdet = self()
-            ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
-            sqrtn = torch.sqrt(self.fgp.n)
-            if update_prior_mean:
-                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-                to = self.task_order
-                ito = self.inv_task_order
-                nord = self.fgp.n[to]
-                mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-                tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-                self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
-            deltatildescat = torch.cat(ytildes,dim=-1)
-            deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-sqrtn*self.fgp.prior_mean
-            ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
-            ztildescat = torch.cat(ztildes,dim=-1)
-            norm_term = (deltatildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
-            logdet = logdet[...,None]
-            d_out = norm_term.numel()
-            term1 = norm_term.sum()
-            mll_const = d_out*self.fgp.n.sum()*np.log(2*np.pi)
-            term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-            mll_loss = 1/2*(term1+term2+mll_const)
-            return mll_loss
-        def gcv_loss(self, update_prior_mean):
-            inv,logdet = self()
-            ytildes = [self.fgp.get_ytilde(i) for i in range(self.fgp.num_tasks)]
-            sqrtn = torch.sqrt(self.fgp.n)
-            if update_prior_mean:
-                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-                rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
-                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-                to = self.task_order
-                ito = self.inv_task_order
-                nord = self.fgp.n[to]
-                mvec = torch.hstack([torch.zeros(1,device=self.fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-                inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
-                tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-                self.fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
-            deltatildescat = torch.cat(ytildes,dim=-1)
-            deltatildescat[...,self.fgp.n_cumsum] = deltatildescat[...,self.fgp.n_cumsum]-torch.sqrt(self.fgp.n)*self.fgp.prior_mean
-            ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
-            ztildescat = torch.cat(ztildes,dim=-1)
-            numer = (ztildescat.conj()*ztildescat).real.sum(-1,keepdim=True)
-            n = inv.size(-2)
-            nrange = torch.arange(n,device=self.fgp.device)
-            tr_k_inv = inv[...,nrange,nrange,:].real.sum(-1).sum(-1,keepdim=True)
-            denom = ((tr_k_inv/self.n.sum())**2).real
-            gcv_loss = (numer/denom).sum()
-            return gcv_loss
-        def cv_loss(self, cv_weights, update_prior_mean):
-            assert not update_prior_mean, "fast GP updates to prior mean with CV loss not yet worked out"
-            if self.fgp.num_tasks==1:
-                inv,logdet = self()
-                coeffs = self._gram_matrix_solve(torch.cat([self.fgp._y[i]-self.fgp.prior_mean[...,i,None] for i in range(self.fgp.num_tasks)],dim=-1),inv)
-                inv_diag = inv[0,0].sum()/self.fgp.n
-                squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
-                cv_loss = squared_sums.sum().real
-            else:
-                assert False, "fast multitask GPs do not yet support efficient CV loss computation"
-            return cv_loss
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         n_og = n 
         if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
@@ -278,7 +132,7 @@ class AbstractFastGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = self._FastInverseLogDetCache(self,n)
+            self.inv_log_det_cache_dict[ntup] = _FastInverseLogDetCache(n)
         return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         kmat_tasks = self.kernel.taskmat
@@ -303,7 +157,7 @@ class AbstractFastGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.kernel.taskmat
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        inv = inv_log_det_cache()[0]
+        inv = inv_log_det_cache(self)[0]
         to = inv_log_det_cache.task_order
         nord = n[to]
         mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
@@ -332,7 +186,7 @@ class AbstractFastGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.kernel.taskmat
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        inv = inv_log_det_cache()[0]
+        inv = inv_log_det_cache(self)[0]
         to = inv_log_det_cache.task_order
         nord = n[to]
         mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
@@ -414,7 +268,7 @@ class AbstractFastGP(AbstractGP):
         return self.ytilde[task]
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
-        return inv_log_det_cache()
+        return inv_log_det_cache(self)
     def ft(self, x):
         """
         One dimensional fast transform along the last dimenions. 
@@ -447,4 +301,3 @@ class AbstractFastGP(AbstractGP):
         y = self.ift_unstable(x-xmean[...,None])
         y[...,0] += xmean*np.sqrt(x.size(-1))
         return y
-

@@ -208,11 +208,11 @@ class AbstractGP(torch.nn.Module):
         inv_log_det_cache = self.get_inv_log_det_cache()
         for i in range(iterations+1):
             if loss_metric=="MLL":
-                loss = inv_log_det_cache.compute_mll_loss(update_prior_mean)
+                loss = inv_log_det_cache.compute_mll_loss(self,update_prior_mean)
             elif loss_metric=="GCV":
-                loss = inv_log_det_cache.gcv_loss(update_prior_mean)
+                loss = inv_log_det_cache.gcv_loss(self,update_prior_mean)
             elif loss_metric=="CV":
-                loss = inv_log_det_cache.cv_loss(cv_weights,update_prior_mean)
+                loss = inv_log_det_cache.cv_loss(self,cv_weights,update_prior_mean)
             else:
                 assert False, "loss_metric parsing implementation error"
             if loss.item()<stop_crit_best_loss:
@@ -362,7 +362,7 @@ class AbstractGP(torch.nn.Module):
         kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
         kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
         kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(kmat_perm)
+        t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
         diag = kmat_new-(t*kmat).sum(-1)
         diag[diag<0] = 0 
@@ -408,7 +408,7 @@ class AbstractGP(torch.nn.Module):
         kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
         kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
         kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(kmat2_perm)
+        t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
         t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
         kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
         if equal:
@@ -587,7 +587,7 @@ class AbstractGP(torch.nn.Module):
         """
         if not hasattr(self,"_coeffs") or (self.n_coeffs!=self.n).any() or not _frozen_equal(self,self.state_dict_coeffs) or _force_recompile(self):
             inv_log_det_cache = self.get_inv_log_det_cache()
-            self._coeffs = inv_log_det_cache.gram_matrix_solve(torch.cat([self._y[i]-self.prior_mean[...,i,None] for i in range(self.num_tasks)],dim=-1))
+            self._coeffs = inv_log_det_cache.gram_matrix_solve(self,torch.cat([self._y[i]-self.prior_mean[...,i,None] for i in range(self.num_tasks)],dim=-1))
             self.state_dict_coeffs = _freeze(self)
             self.n_coeffs = self.n.clone()
         return self._coeffs  
