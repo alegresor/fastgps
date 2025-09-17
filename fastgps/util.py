@@ -201,7 +201,7 @@ class _FastInverseLogDetCache:
             nord = fgp.n[to]
             mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
             tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-sqrtn*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -228,7 +228,7 @@ class _FastInverseLogDetCache:
             mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
             inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
             tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-torch.sqrt(fgp.n)*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -307,7 +307,7 @@ class _StandardInverseLogDetCache:
             rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
             thetainv_split = [thetinv_i.split(self.n.tolist(),dim=-1) for thetinv_i in thetainv.split(self.n.tolist(),dim=-2)]
             tasksums = torch.cat([torch.cat([thetainv_split[i][j].sum((-2,-1),keepdim=True) for j in range(fgp.num_tasks)],dim=-1) for i in range(fgp.num_tasks)],dim=-2)
-            fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         delta = y.clone()
         for i in range(fgp.num_tasks):
             delta[...,fgp.n_cumsum[i]:(fgp.n_cumsum[i]+fgp.n[i])] -= fgp.prior_mean[...,i,None]
@@ -329,7 +329,7 @@ class _StandardInverseLogDetCache:
             rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
             thetainv2_split = [thetinv2_i.split(self.n.tolist(),dim=-1) for thetinv2_i in thetainv2.split(self.n.tolist(),dim=-2)]
             tasksums = torch.cat([torch.cat([thetainv2_split[i][j].sum((-2,-1),keepdim=True) for j in range(fgp.num_tasks)],dim=-1) for i in range(fgp.num_tasks)],dim=-2)
-            fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         delta = y.clone()
         for i in range(fgp.num_tasks):
             delta[...,fgp.n_cumsum[i]:(fgp.n_cumsum[i]+fgp.n[i])] -= fgp.prior_mean[...,i,None]
@@ -350,7 +350,7 @@ class _StandardInverseLogDetCache:
             rhs = torch.cat([rhs_i.sum(-1,keepdim=True) for rhs_i in rhs],dim=-1)
             cmat_split = [cmat_i.split(self.n.tolist(),dim=-1) for cmat_i in cmat.split(self.n.tolist(),dim=-2)]
             tasksums = torch.cat([torch.cat([cmat_split[i][j].sum((-2,-1),keepdim=True) for j in range(fgp.num_tasks)],dim=-1) for i in range(fgp.num_tasks)],dim=-2)
-            fgp.prior_mean = torch.linalg.solve(tasksums,rhs[...,None])[...,0]
+            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         delta = y.clone()
         for i in range(fgp.num_tasks):
             delta[...,fgp.n_cumsum[i]:(fgp.n_cumsum[i]+fgp.n[i])] -= fgp.prior_mean[...,i,None]
