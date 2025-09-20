@@ -142,7 +142,7 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 3
         >>> sgp = StandardGP(
-        ...     qp.KernelSquaredExponential(d,torchify=True,device=device),
+        ...     qp.KernelMatern52(d,torchify=True,device=device),
         ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
@@ -174,6 +174,34 @@ class StandardGP(AbstractGP):
         >>> xticks = torch.linspace(0,1,101,device=device) 
         >>> pmean,pvar,q,pci_low,pci_high = sgp.post_ci(xticks[:,None])
         >>> pcmean,pcvar,q,pcci_low,pcci_high =  sgp.post_cubature_ci()
+
+        Batch Inference 
+
+        >>> d = 4
+        >>> n = 2**10
+        >>> dnb2 = qp.DigitalNetB2(d,seed=7) 
+        >>> kernel = qp.KernelGaussian(d,torchify=True,shape_scale=(2,1),shape_lengthscales=(3,2,d))
+        >>> fgp = StandardGP(kernel,dnb2) 
+        >>> x = fgp.get_x_next(n) 
+        >>> x.shape
+        torch.Size([1024, 4])
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y.shape
+        torch.Size([3, 2, 1024])
+        >>> fgp.add_y_next(y) 
+        >>> data = fgp.fit(verbose=0)
+        >>> fgp.post_cubature_mean()
+        tensor([[4.0000, 2.0000],
+                [1.3333, 1.0000],
+                [0.8000, 0.6666]])
+        >>> fgp.post_cubature_var()
+        tensor([[9.5590e-08, 1.0112e-07],
+                [1.0080e-07, 1.1565e-07],
+                [9.8207e-08, 1.1822e-07]])
+        >>> fgp.post_cubature_var(n=4*n)
+        tensor([[1.9371e-08, 1.3673e-07],
+                [2.5713e-08, 3.6217e-08],
+                [2.1941e-08, 8.2669e-08]])
     """
     def __init__(self,
             kernel:qp.kernel.abstract_kernel.AbstractKernel,

@@ -142,6 +142,34 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
         >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights="L2R")
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
+
+        Batch Inference 
+
+        >>> d = 4
+        >>> n = 2**10
+        >>> dnb2 = qp.DigitalNetB2(d,seed=7) 
+        >>> kernel = qp.KernelDSICombined(d,torchify=True,shape_alpha=(2,4,d),shape_scale=(2,1),shape_lengthscales=(3,2,d))
+        >>> fgp = FastGPDigitalNetB2(kernel,dnb2) 
+        >>> x = fgp.get_x_next(n) 
+        >>> x.shape
+        torch.Size([1024, 4])
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y.shape
+        torch.Size([3, 2, 1024])
+        >>> fgp.add_y_next(y) 
+        >>> data = fgp.fit(verbose=0)
+        >>> fgp.post_cubature_mean()
+        tensor([[4.0000, 2.0000],
+                [1.3333, 1.0000],
+                [0.8000, 0.6667]])
+        >>> fgp.post_cubature_var()
+        tensor([[4.3368e-19, 3.8242e-09],
+                [5.0432e-09, 6.5173e-09],
+                [8.4400e-09, 1.1051e-08]])
+        >>> fgp.post_cubature_var(n=4*n)
+        tensor([[1.0842e-19, 1.1605e-10],
+                [1.5354e-10, 1.9670e-10],
+                [2.5281e-10, 3.3069e-10]])
     """
     def __init__(self,
             kernel:Union[qp.KernelDigShiftInvar,qp.KernelDigShiftInvarAdaptiveAlpha,qp.KernelDigShiftInvarCombined],

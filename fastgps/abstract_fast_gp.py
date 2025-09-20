@@ -54,7 +54,10 @@ class AbstractFastGP(AbstractGP):
         return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         kmat_tasks = self.kernel.taskmat
-        coeffs = self.coeffs
+        if self.solo_task: # numerically stable computation
+            lam = self.get_lam(0,0)[...,[0]].real+self.noise/torch.sqrt(self.n)
+        else:
+            coeffs = self.coeffs
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
@@ -63,9 +66,12 @@ class AbstractFastGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        coeffs_split = coeffs.split(self.n.tolist(),-1)
-        coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
-        pcmean = self.prior_mean[...,task]+torch.cat(coeffs_split_scaled,-1).sum(-1)
+        if self.solo_task: # numerically stable computation
+            pcmean = self.prior_mean[...,task]+(self._y[0].mean(-1,keepdim=True)-self.prior_mean[...,task])*torch.sqrt(self.n)/lam
+        else:
+            coeffs_split = coeffs.split(self.n.tolist(),-1)
+            coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
+            pcmean = self.prior_mean[...,task]+torch.cat(coeffs_split_scaled,-1).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
@@ -74,12 +80,15 @@ class AbstractFastGP(AbstractGP):
         if isinstance(n,int): n = torch.tensor([n],dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.kernel.taskmat
-        inv_log_det_cache = self.get_inv_log_det_cache(n)
-        inv = inv_log_det_cache(self)[0]
-        to = inv_log_det_cache.task_order
-        nord = n[to]
-        mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-        nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
+        if self.solo_task: # numerically stable computation
+            lamm1 = self.get_lam_m1(0,0,n=n)[...,[0]].real+self.noise/torch.sqrt(n)
+        else:
+            inv_log_det_cache = self.get_inv_log_det_cache(n)
+            inv = inv_log_det_cache(self)[0]
+            to = inv_log_det_cache.task_order
+            nord = n[to]
+            mvec = torch.hstack([torch.zeros(1,device=self.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+            nsqrts = torch.sqrt(nord[:,None]*nord[None,:])
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
@@ -88,12 +97,15 @@ class AbstractFastGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]
-        kmat_tasks_left = kmat_tasks[...,task,:][...,:,to].to(self._FTOUTDTYPE)
-        kmat_tasks_right = kmat_tasks[...,to,:][...,:,task].to(self._FTOUTDTYPE)
-        term = torch.einsum("...ij,...jk,...ki->...i",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
         s = self.kernel.base_kernel.scale
-        pcvar = s*kmat_tasks[...,task,task]-s**2*term
+        if self.solo_task: # stable computation
+            pcvar = s*lamm1/(lamm1+s*torch.sqrt(n))
+        else:
+            inv_cut = inv[...,mvec,:,:][...,:,mvec,:][...,0]
+            kmat_tasks_left = kmat_tasks[...,task,:][...,:,to].to(self._FTOUTDTYPE)
+            kmat_tasks_right = kmat_tasks[...,to,:][...,:,task].to(self._FTOUTDTYPE)
+            term = torch.einsum("...ij,...jk,...ki->...i",kmat_tasks_left,nsqrts*inv_cut,kmat_tasks_right).real
+            pcvar = s*kmat_tasks[...,task,task]-s**2*term
         pcvar[pcvar<0] = 0.
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -150,6 +162,12 @@ class AbstractFastGP(AbstractGP):
         if n is None: m = int(self.m[task0])
         else: m = -1 if n==0 else int(np.log2(int(n)))
         return self.lam_caches[task0,task1].getitem(self,m)
+    def get_lam_m1(self, task0, task1, n=None):
+        assert 0<=task0<self.num_tasks
+        assert 0<=task1<self.num_tasks
+        if n is None: m = int(self.m[task0])
+        else: m = -1 if n==0 else int(np.log2(int(n)))
+        return self.lam_caches[task0,task1].getitem_m1(self,m)
     def get_k1parts(self, task0, task1, i=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks

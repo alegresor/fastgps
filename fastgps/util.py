@@ -65,16 +65,16 @@ class _LamCaches:
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            k1 = fgp.kernel.base_kernel.combine_per_dim_components(fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params)
-            self.lam_list = [fgp.ft(k1)]
+            _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params)
+            self.lam_list = [fgp.ft(k1m1)]
             self._freeze(fgp,0)
             self.m_min = self.m_max = m
             return self.lam_list[0]
         if m==self.m_min:
             if not self._frozen_equal(fgp,0) or self._force_recompile(fgp):
                 batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-                k1 = fgp.kernel.base_kernel.combine_per_dim_components(fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params)
-                self.lam_list[0] = fgp.ft(k1)
+                _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params)
+                self.lam_list[0] = fgp.ft(k1m1)
                 self._freeze(fgp,0)
             return self.lam_list[0]
         if m>self.m_max:
@@ -88,14 +88,14 @@ class _LamCaches:
         if not self._frozen_equal(fgp,midx) or self._force_recompile(fgp):
             omega_m = fgp.omega(m-1).to(fgp.device)
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            k1_m = fgp.kernel.base_kernel.combine_per_dim_components(fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params)
-            lam_m = fgp.ft(k1_m)
+            _,k1m1_m = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params)
+            lam_m = fgp.ft(k1m1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(fgp,m-1)
             self.lam_list[midx] = torch.cat([lam_m_prev+omega_lam_m,lam_m_prev-omega_lam_m],-1)/np.sqrt(2)
             self._freeze(fgp,midx)
         return self.lam_list[midx]
-    def getitem(self, fgp, m):
+    def getitem_m1(self, fgp, m):
         lam = self.__getitem__no_delete(fgp,m)
         while self.m_min<max(fgp.m[self.l0],fgp.m[self.l1]):
             del self.lam_list[0]
@@ -105,6 +105,10 @@ class _LamCaches:
             del self.raw_noise_freeze_list[0]
             self.m_min += 1
         return lam
+    def getitem(self, fgp, m):
+        lam = self.getitem_m1(fgp, m)
+        e = 1*(torch.arange(lam.size(-1),device=lam.device)==0)
+        return lam+self.c.sum()*fgp.kernel.base_kernel.scale*np.sqrt(2**m)*e
     
 class _FastInverseLogDetCache:
     def __init__(self, n):
@@ -189,19 +193,22 @@ class _FastInverseLogDetCache:
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
         return zst
-    def compute_mll_loss(self, fgp, update_prior_mean):
+    def mll_loss(self, fgp, update_prior_mean):
         inv,logdet = self(fgp)
         ytildes = [fgp.get_ytilde(i) for i in range(fgp.num_tasks)]
         sqrtn = torch.sqrt(fgp.n)
         if update_prior_mean:
-            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-            to = self.task_order
-            ito = self.inv_task_order
-            nord = fgp.n[to]
-            mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-            tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
+            if fgp.solo_task:
+                fgp.prior_mean = fgp._y[0].mean(dim=-1,keepdim=True)
+            else:
+                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+                to = self.task_order
+                ito = self.inv_task_order
+                nord = fgp.n[to]
+                mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+                tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
+                fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-sqrtn*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -219,16 +226,19 @@ class _FastInverseLogDetCache:
         ytildes = [fgp.get_ytilde(i) for i in range(fgp.num_tasks)]
         sqrtn = torch.sqrt(fgp.n)
         if update_prior_mean:
-            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-            rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
-            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-            to = self.task_order
-            ito = self.inv_task_order
-            nord = fgp.n[to]
-            mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-            inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
-            tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
+            if fgp.solo_task: # stable computation
+                fgp.prior_mean = fgp._y[0].mean(dim=-1,keepdim=True)
+            else:
+                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+                rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
+                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+                to = self.task_order
+                ito = self.inv_task_order
+                nord = fgp.n[to]
+                mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+                inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
+                tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real            
+                fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-torch.sqrt(fgp.n)*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -299,7 +309,7 @@ class _StandardInverseLogDetCache:
         thetainv,logdet = self(fgp)
         v = torch.einsum("...ij,...j->...i",thetainv,y)
         return v
-    def compute_mll_loss(self, fgp, update_prior_mean):
+    def mll_loss(self, fgp, update_prior_mean):
         thetainv,logdet = self(fgp)
         y = torch.cat(fgp._y,dim=-1) 
         if update_prior_mean:
