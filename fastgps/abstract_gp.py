@@ -98,7 +98,7 @@ class AbstractGP(torch.nn.Module):
             requires_grad_param = requires_grad_noise,
             tfs_param = tfs_noise,
             endsize_ops = [1],
-            constraints = ["POSITIVE"])
+            constraints = ["NON-NEGATIVE"])
         self.tfs_noise = tfs_noise
         self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
@@ -203,19 +203,27 @@ class AbstractGP(torch.nn.Module):
         stop_crit_best_loss = torch.inf 
         stop_crit_save_loss = torch.inf 
         stop_crit_iterations_without_improvement_loss = 0
-        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
         update_prior_mean = update_prior_mean and (not self.derivatives_flag) and loss_metric!="CV"
         inv_log_det_cache = self.get_inv_log_det_cache()
+        try:
+            pcstd = torch.sqrt(self.post_cubature_var(eval=False))
+            can_compute_pcstd = True
+        except Exception as e:
+            if "parsed_single_integral_01d" not in str(e): raise
+            can_compute_pcstd = False
         for i in range(iterations+1):
+            os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
             if loss_metric=="MLL":
-                loss = inv_log_det_cache.compute_mll_loss(self,update_prior_mean)
+                loss = inv_log_det_cache.mll_loss(self,update_prior_mean)
             elif loss_metric=="GCV":
                 loss = inv_log_det_cache.gcv_loss(self,update_prior_mean)
             elif loss_metric=="CV":
                 loss = inv_log_det_cache.cv_loss(self,cv_weights,update_prior_mean)
             else:
                 assert False, "loss_metric parsing implementation error"
-            if loss.item()<stop_crit_best_loss:
+            del os.environ["FASTGP_FORCE_RECOMPILE"]
+            pcstd = torch.sqrt(self.post_cubature_var()) if can_compute_pcstd else torch.inf*torch.ones(1,device=self.device)
+            if loss.item()<stop_crit_best_loss and (pcstd>0).all():
                 stop_crit_best_loss = loss.item()
                 best_params = (self.prior_mean.clone().detach(),OrderedDict([(pname,pval.clone()) for pname,pval in self.state_dict().items()]))
             if (stop_crit_save_loss-loss.item())>logtol:
@@ -223,7 +231,7 @@ class AbstractGP(torch.nn.Module):
                 stop_crit_save_loss = stop_crit_best_loss
             else:
                 stop_crit_iterations_without_improvement_loss += 1
-            break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations
+            break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations or (pcstd<=0).any()
             if store_hists and (break_condition or i%store_hists==0):
                 hist_data["iteration"].append(i)
                 hist_data["loss"].append(loss.item())
@@ -245,7 +253,6 @@ class AbstractGP(torch.nn.Module):
             optimizer.zero_grad()
         self.prior_mean = best_params[0]
         self.load_state_dict(best_params[1])
-        del os.environ["FASTGP_FORCE_RECOMPILE"]
         if store_hists:
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
             hist_data["loss"] = torch.tensor(hist_data["loss"])

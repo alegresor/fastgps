@@ -142,7 +142,7 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 3
         >>> sgp = StandardGP(
-        ...     qp.KernelSquaredExponential(d,torchify=True,device=device),
+        ...     qp.KernelMatern52(d,torchify=True,device=device),
         ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)

@@ -193,19 +193,22 @@ class _FastInverseLogDetCache:
         zsto = z.split(self.n[self.task_order].tolist(),dim=-1)
         zst = [zsto[o] for o in self.inv_task_order]
         return zst
-    def compute_mll_loss(self, fgp, update_prior_mean):
+    def mll_loss(self, fgp, update_prior_mean):
         inv,logdet = self(fgp)
         ytildes = [fgp.get_ytilde(i) for i in range(fgp.num_tasks)]
         sqrtn = torch.sqrt(fgp.n)
         if update_prior_mean:
-            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-            to = self.task_order
-            ito = self.inv_task_order
-            nord = fgp.n[to]
-            mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-            tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
+            if fgp.solo_task:
+                fgp.prior_mean = fgp._y[0].mean(dim=-1,keepdim=True)
+            else:
+                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+                to = self.task_order
+                ito = self.inv_task_order
+                nord = fgp.n[to]
+                mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+                tasksums = sqrtn*inv[...,0][...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
+                fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-sqrtn*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -223,16 +226,19 @@ class _FastInverseLogDetCache:
         ytildes = [fgp.get_ytilde(i) for i in range(fgp.num_tasks)]
         sqrtn = torch.sqrt(fgp.n)
         if update_prior_mean:
-            rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
-            rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
-            rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
-            to = self.task_order
-            ito = self.inv_task_order
-            nord = fgp.n[to]
-            mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
-            inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
-            tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real
-            fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
+            if fgp.solo_task: # stable computation
+                fgp.prior_mean = fgp._y[0].mean(dim=-1,keepdim=True)
+            else:
+                rhs = self._gram_matrix_solve_tilde_to_tilde(ytildes,inv)
+                rhs = self._gram_matrix_solve_tilde_to_tilde(rhs,inv)
+                rhs = torch.cat([rhs_i[...,0,None] for rhs_i in rhs],dim=-1).real
+                to = self.task_order
+                ito = self.inv_task_order
+                nord = fgp.n[to]
+                mvec = torch.hstack([torch.zeros(1,device=fgp.device),(nord/nord[-1]).cumsum(0)]).to(int)[:-1]
+                inv2 = torch.einsum("...ij,...jk->...ik",inv[...,0],inv[...,0])
+                tasksums = sqrtn*inv2[...,mvec,:][...,:,mvec][...,ito,:][...,:,ito].real            
+                fgp.prior_mean = torch.linalg.solve_ex(tasksums,rhs[...,None])[0][...,0]
         deltatildescat = torch.cat(ytildes,dim=-1)
         deltatildescat[...,fgp.n_cumsum] = deltatildescat[...,fgp.n_cumsum]-torch.sqrt(fgp.n)*fgp.prior_mean
         ztildes = self._gram_matrix_solve_tilde_to_tilde(deltatildescat.split(self.n.tolist(),dim=-1),inv)
@@ -303,7 +309,7 @@ class _StandardInverseLogDetCache:
         thetainv,logdet = self(fgp)
         v = torch.einsum("...ij,...j->...i",thetainv,y)
         return v
-    def compute_mll_loss(self, fgp, update_prior_mean):
+    def mll_loss(self, fgp, update_prior_mean):
         thetainv,logdet = self(fgp)
         y = torch.cat(fgp._y,dim=-1) 
         if update_prior_mean:

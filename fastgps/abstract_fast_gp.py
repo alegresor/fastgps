@@ -54,7 +54,10 @@ class AbstractFastGP(AbstractGP):
         return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True):
         kmat_tasks = self.kernel.taskmat
-        coeffs = self.coeffs
+        if self.solo_task: # numerically stable computation
+            lam = self.get_lam(0,0)[0].real+self.noise/torch.sqrt(self.n)
+        else:
+            coeffs = self.coeffs
         if eval:
             incoming_grad_enabled = torch.is_grad_enabled()
             torch.set_grad_enabled(False)
@@ -63,9 +66,12 @@ class AbstractFastGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        coeffs_split = coeffs.split(self.n.tolist(),-1)
-        coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
-        pcmean = self.prior_mean[...,task]+torch.cat(coeffs_split_scaled,-1).sum(-1)
+        if self.solo_task: # numerically stable computation
+            pcmean = self.prior_mean[...,task]+(self._y[0].mean(-1)-self.prior_mean[...,task])*torch.sqrt(self.n)/lam
+        else:
+            coeffs_split = coeffs.split(self.n.tolist(),-1)
+            coeffs_split_scaled = [(self.kernel.base_kernel.scale*coeffs_split[l])[...,None,:]*kmat_tasks[...,task,l,None] for l in range(self.num_tasks)]
+            pcmean = self.prior_mean[...,task]+torch.cat(coeffs_split_scaled,-1).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
@@ -75,7 +81,7 @@ class AbstractFastGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and (n&(n-1)==0).all() and (n>=self.n).all(), "require n are all power of two greater than or equal to self.n"
         kmat_tasks = self.kernel.taskmat
         if self.solo_task: # numerically stable computation
-            lamm1 = self.get_lam_m1(0,0,n=n)[0].real+self.noise/np.sqrt(n)
+            lamm1 = self.get_lam_m1(0,0,n=n)[0].real+self.noise/torch.sqrt(n)
         else:
             inv_log_det_cache = self.get_inv_log_det_cache(n)
             inv = inv_log_det_cache(self)[0]
