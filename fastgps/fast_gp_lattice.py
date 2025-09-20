@@ -147,6 +147,34 @@ class FastGPLattice(AbstractFastGP):
         >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights=1/torch.arange(1,2*n+1,device=device).reshape((2,n)))
         >>> data = sgp.fit(loss_metric="CV",iterations=5,verbose=0,cv_weights="L2R")
         >>> data = sgp.fit(loss_metric="GCV",iterations=5,verbose=0)
+
+        Batch Inference 
+
+        >>> d = 4
+        >>> n = 2**10
+        >>> dnb2 = qp.Lattice(d,seed=7) 
+        >>> kernel = qp.KernelSICombined(d,torchify=True,shape_alpha=(2,4,d),shape_scale=(2,1),shape_lengthscales=(3,2,d))
+        >>> fgp = FastGPLattice(kernel,dnb2) 
+        >>> x = fgp.get_x_next(n) 
+        >>> x.shape
+        torch.Size([1024, 4])
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y.shape
+        torch.Size([3, 2, 1024])
+        >>> fgp.add_y_next(y) 
+        >>> data = fgp.fit(verbose=0)
+        >>> fgp.post_cubature_mean()
+        tensor([[4.0000, 2.0001],
+                [1.3334, 1.0001],
+                [0.8001, 0.6668]])
+        >>> fgp.post_cubature_var()
+        tensor([[0.0008, 0.0008],
+                [0.0008, 0.0008],
+                [0.0008, 0.0008]])
+        >>> fgp.post_cubature_var(n=4*n)
+        tensor([[0., 0.],
+                [0., 0.],
+                [0., 0.]])
     """
     def __init__(self,
             kernel:Union[qp.KernelShiftInvar,qp.KernelShiftInvarCombined],
