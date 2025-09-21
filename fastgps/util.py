@@ -65,7 +65,7 @@ class _LamCaches:
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params)
+            _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
             self.lam_list = [fgp.ft(k1m1)]
             self._freeze(fgp,0)
             self.m_min = self.m_max = m
@@ -73,7 +73,7 @@ class _LamCaches:
         if m==self.m_min:
             if not self._frozen_equal(fgp,0) or self._force_recompile(fgp):
                 batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-                _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params)
+                _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
                 self.lam_list[0] = fgp.ft(k1m1)
                 self._freeze(fgp,0)
             return self.lam_list[0]
@@ -88,7 +88,7 @@ class _LamCaches:
         if not self._frozen_equal(fgp,midx) or self._force_recompile(fgp):
             omega_m = fgp.omega(m-1).to(fgp.device)
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            _,k1m1_m = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params)
+            _,k1m1_m = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
             lam_m = fgp.ft(k1m1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(fgp,m-1)
