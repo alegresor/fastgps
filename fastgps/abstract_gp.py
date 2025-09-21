@@ -114,7 +114,7 @@ class AbstractGP(torch.nn.Module):
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
-        self.stable = True # maybe change this in the future if we come across any more calcellation error issues
+        self.stable = False # maybe change this in the future if we come across any more calcellation error issues
     def save_params(self, path):
         """ Save the state dict to path 
         
