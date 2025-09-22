@@ -14,6 +14,73 @@ class DummyDiscreteDistrib(qp.discrete_distribution.abstract_discrete_distributi
         assert return_binary is False
         assert n_min==0 and n_max==self.n, "trying to generate samples other than the one provided is invalid"
         return self.x[None]
+    
+class _XXbSeq(object):
+    def __init__(self, fgp, seq):
+        self.seq = seq
+        self.n = 0
+        self.x = torch.empty((0,seq.d),device=fgp.device)
+        self.xb = torch.empty((0,seq.d),dtype=fgp._XBDTYPE,device=fgp.device)
+    def getitem(self, fgp, i):
+        if isinstance(i,int): i = slice(None,i,None)
+        if isinstance(i,torch.Tensor):
+            assert i.numel()==1 and isinstance(i,torch.int64)
+            i = slice(None,i.item(),None)
+        assert isinstance(i,slice)
+        if i.stop>self.n:
+            x_next,xb_next = fgp._sample(self.seq,self.n,i.stop)
+            if x_next.data_ptr()==xb_next.data_ptr():
+                self.x = self.xb = torch.vstack([self.x,x_next])
+            else:
+                self.x = torch.vstack([self.x,x_next])
+                self.xb = torch.vstack([self.xb,xb_next])
+            self.n = i.stop
+        return self.x[i],self.xb[i]
+
+class _K1PartsSeq(object):
+    def __init__(self, fgp, l0, l1, beta, kappa):
+        self.l0,self.l1 = l0,l1
+        assert beta.ndim==2 and beta.size(-1)==fgp.d and kappa.ndim==2 and kappa.size(-1)==fgp.d
+        assert beta.shape==kappa.shape
+        self.beta = beta 
+        self.kappa = kappa
+        self.n = 0
+    def getitem(self, fgp, i):
+        if isinstance(i,int): i = slice(None,i,None)
+        if isinstance(i,torch.Tensor):
+            assert i.numel()==1 and isinstance(i,torch.int64)
+            i = slice(None,i.item(),None)
+        assert isinstance(i,slice)
+        if i.stop>self.n:
+            _,xb_next = fgp.xxb_seqs[self.l0].getitem(fgp,slice(self.n,i.stop))
+            _,xb0 = fgp.xxb_seqs[self.l1].getitem(fgp,slice(0,1))
+            k1parts_next = fgp.kernel.base_kernel.get_per_dim_components(xb_next,xb0,self.beta,self.kappa)
+            if not hasattr(self,"k1parts"):
+                self.k1parts = k1parts_next 
+            else:
+                self.k1parts = torch.cat([self.k1parts,k1parts_next],dim=0)
+            self.n = i.stop
+        return self.k1parts[i]
+
+class _YtildeCache(object):
+    def __init__(self, fgp, l):
+        self.l = l
+    def __call__(self, fgp):
+        if not hasattr(self,"ytilde") or fgp.n[self.l]<=1:
+            self.ytilde = fgp.ft(fgp._y[self.l]) if fgp.n[self.l]>1 else fgp._y[self.l].clone().to(fgp._FTOUTDTYPE)
+            self.n = fgp.n[self.l].item()
+            return self.ytilde
+        while self.n!=fgp.n[self.l]:
+            n_double = 2*self.n
+            ytilde_next = fgp.ft(fgp._y[self.l][...,self.n:n_double])
+            omega_m = fgp.omega(int(np.log2(self.n))).to(fgp.device)
+            omega_ytilde_next = omega_m*ytilde_next
+            self.ytilde = torch.cat([self.ytilde+omega_ytilde_next,self.ytilde-omega_ytilde_next],-1)/np.sqrt(2)
+            if os.environ.get("FASTGP_DEBUG")=="True":
+                ytilde_ref = fgp.ft(fgp._y[self.l][:n_double])
+                assert torch.allclose(self.ytilde,ytilde_ref,atol=1e-7,rtol=0)
+            self.n = n_double
+        return self.ytilde
 
 def _freeze(fgp):
     return {pname:pval.data.detach().clone() for pname,pval in fgp.state_dict().items()}
@@ -65,7 +132,7 @@ class _LamCaches:
         assert m>=self.m_min, "old lambda are not retained after updating"
         if self.m_min==-1 and m>=0:
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**m),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
+            _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,n=2**m),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
             self.lam_list = [fgp.ft(k1m1)]
             self._freeze(fgp,0)
             self.m_min = self.m_max = m
@@ -73,7 +140,7 @@ class _LamCaches:
         if m==self.m_min:
             if not self._frozen_equal(fgp,0) or self._force_recompile(fgp):
                 batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-                _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,2**self.m_min),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
+                _,k1m1 = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,n=2**self.m_min),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
                 self.lam_list[0] = fgp.ft(k1m1)
                 self._freeze(fgp,0)
             return self.lam_list[0]
@@ -88,7 +155,7 @@ class _LamCaches:
         if not self._frozen_equal(fgp,midx) or self._force_recompile(fgp):
             omega_m = fgp.omega(m-1).to(fgp.device)
             batch_params = fgp.kernel.base_kernel.get_batch_params(1)
-            _,k1m1_m = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.get_k1parts(self.l0,self.l1,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
+            _,k1m1_m = fgp.kernel.base_kernel.combine_per_dim_components_raw_m1(fgp.k1parts_seq[self.l0,self.l1].getitem(fgp,slice(2**(m-1),2**m)),self.beta0,self.beta1,self.c,batch_params,fgp.stable)
             lam_m = fgp.ft(k1m1_m)
             omega_lam_m = omega_m*lam_m
             lam_m_prev = self.__getitem__no_delete(fgp,m-1)

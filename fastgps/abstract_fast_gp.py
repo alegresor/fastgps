@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Union,List
 from .abstract_gp import AbstractGP
-from .util import _freeze,_frozen_equal,_force_recompile,_FastInverseLogDetCache,_LamCaches
+from .util import _K1PartsSeq,_FastInverseLogDetCache,_LamCaches,_YtildeCache
 import os 
 
 class AbstractFastGP(AbstractGP):
@@ -19,11 +19,9 @@ class AbstractFastGP(AbstractGP):
         self.ift_unstable = ift
         self.omega = omega
         # storage and dynamic caches
-        self.k1parts = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
-        self.n_k1parts = np.array([[0 if l1>=l0 else -1 for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=int)
+        self.k1parts_seq = np.array([[_K1PartsSeq(self,l0,l1,*self.derivatives_cross[l0][l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
         self.lam_caches = np.array([[_LamCaches(self,l0,l1,*self.derivatives_cross[l0][l1],self.derivatives_coeffs_cross[l0][l1]) if l1>=l0 else None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)],dtype=object)
-        self.ytilde = [None]*self.num_tasks
-        self.n_ytilde = np.zeros(self.num_tasks,dtype=int)
+        self.ytilde_cache = np.array([_YtildeCache(self,i) for i in range(self.num_tasks)],dtype=object)
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         n_og = n 
         if isinstance(n,(int,np.int64)): n = torch.tensor([n],dtype=int,device=self.device) 
@@ -168,40 +166,15 @@ class AbstractFastGP(AbstractGP):
         if n is None: m = int(self.m[task0])
         else: m = -1 if n==0 else int(np.log2(int(n)))
         return self.lam_caches[task0,task1].getitem_m1(self,m)
-    def get_k1parts(self, task0, task1, i=None):
+    def get_k1parts(self, task0, task1, n=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks
-        assert task0<=task1
-        if i is None: i = self.n[task0]
-        if isinstance(i,int): i = slice(None,i,None)
-        if isinstance(i,torch.Tensor):
-            assert i.numel()==1 and isinstance(i,torch.int64)
-            i = slice(None,i.item(),None)
-        assert isinstance(i,slice)
-        if i.stop>self.n_k1parts[task0,task1]:
-            xb_next = self.get_xb(task0,slice(self.n_k1parts[task0,task1],i.stop))
-            xb0 = self.get_xb(task1,slice(0,1))
-            k1parts_next = self.kernel.base_kernel.get_per_dim_components(xb_next,xb0,*self.derivatives_cross[task0][task1])
-            if self.k1parts[task0][task1] is None:
-                self.k1parts[task0][task1] = k1parts_next 
-            else:
-                self.k1parts[task0][task1] = torch.cat([self.k1parts[task0][task1],k1parts_next],dim=0)
-            self.n_k1parts[task0,task1] = i.stop
-        return self.k1parts[task0][task1][i]
+        if n is None: n = self.n[task0]
+        assert n>=0
+        return self.k1parts_seq[task0,task1].getitem(self,slice(0,n))
     def get_ytilde(self, task):
         assert 0<=task<self.num_tasks
-        if self.ytilde[task] is None or self.n_ytilde[task]<=1:
-            self.ytilde[task] = self.ft(self._y[task]) if self.n[task]>1 else self._y[task].clone().to(self._FTOUTDTYPE)
-            self.n_ytilde[task] = self.n[task].item()
-            return self.ytilde[task]
-        while self.n_ytilde[task]!=self.n[task]:
-            n_double = 2*self.n_ytilde[task]
-            ytilde_next = self.ft(self._y[task][...,self.n_ytilde[task]:n_double])
-            omega_m = self.omega(int(np.log2(self.n_ytilde[task]))).to(self.device)
-            omega_ytilde_next = omega_m*ytilde_next
-            self.ytilde[task] = torch.cat([self.ytilde[task]+omega_ytilde_next,self.ytilde[task]-omega_ytilde_next],-1)/np.sqrt(2)
-            self.n_ytilde[task] = n_double
-        return self.ytilde[task]
+        return self.ytilde_cache[task](self)
     def get_inv_log_det(self, n=None):
         inv_log_det_cache = self.get_inv_log_det_cache(n)
         return inv_log_det_cache(self)

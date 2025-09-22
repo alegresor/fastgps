@@ -1,6 +1,5 @@
 from .abstract_gp import AbstractGP
 from .util import (
-    _freeze,_frozen_equal,_force_recompile,
     DummyDiscreteDistrib,
     _StandardInverseLogDetCache
 )

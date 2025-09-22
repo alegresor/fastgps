@@ -1,5 +1,5 @@
 from .util import (
-    _freeze,_frozen_equal,_force_recompile,
+    _freeze,_frozen_equal,_force_recompile,_XXbSeq
 )
 import torch
 import numpy as np 
@@ -103,8 +103,7 @@ class AbstractGP(torch.nn.Module):
         self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
-        self._x = [torch.empty((0,seqs[i].d),device=self.device) for i in range(self.num_tasks)]
-        self._xb = [torch.empty((0,seqs[i].d),device=self.device,dtype=self._XBDTYPE) for i in range(self.num_tasks)]
+        self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
         self.n_x = torch.zeros(self.num_tasks,dtype=int)
         self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
@@ -288,7 +287,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
-        x_next = [self.get_x(l,slice(self.n[l],n[i])) for i,l in enumerate(task)]
+        x_next = [self.xxb_seqs[l].getitem(self,slice(self.n[l],n[i]))[0] for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
@@ -616,25 +615,16 @@ class AbstractGP(torch.nn.Module):
         A `list` for multitask problems.
         """
         return self._y[0] if self.solo_task else self._y 
-    def get_x_xb(self, task, i=None):
+    def get_x(self, task, n=None):
         assert 0<=task<self.num_tasks
-        if i is None: i = self.n[task]
-        if isinstance(i,int): i = slice(None,i,None)
-        if isinstance(i,torch.Tensor):
-            assert i.numel()==1 and i%1==0
-            i = slice(None,int(i.item()),None)
-        assert isinstance(i,slice)
-        if i.stop>self.n_x[task]:
-            x_next,xb_next = self._sample(self.seqs[task],self.n_x[task],i.stop)
-            if x_next.data_ptr()==xb_next.data_ptr():
-                self._x[task] = self._xb[task] = torch.vstack([self._x[task],x_next])
-            else:
-                self._x[task] = torch.vstack([self._x[task],x_next])
-                self._xb[task] = torch.vstack([self._xb[task],xb_next])
-            self.n_x[task] = i.stop
-        return self._x[task][i],self._xb[task][i]
-    def get_x(self, task, i=None):
-        return self.get_x_xb(task=task,i=i)[0]
-    def get_xb(self, task, i=None):
-        return self.get_x_xb(task=task,i=i)[1]
+        if n is None: n = self.n[task]
+        assert n>=0
+        x,xb = self.xxb_seqs[task].getitem(self,slice(0,n))
+        return x
+    def get_xb(self, task, n=None):
+        assert 0<=task<self.num_tasks
+        if n is None: n = self.n[task]
+        assert n>=0
+        x,xb = self.xxb_seqs[task].getitem(self,slice(0,n))
+        return xb
     
