@@ -257,6 +257,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             adaptive_nugget,
         )
     def _sample(self, seq, n_min, n_max):
-        _x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
-        x = qp.util.dig_shift_invar_ops.to_float(_x,self.t)
-        return x,_x
+        xb = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)
+        return xb
+    def _convert_xb_to_x(self, xb):
+        return qp.util.dig_shift_invar_ops.to_float(xb,self.t)

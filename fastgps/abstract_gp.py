@@ -267,7 +267,9 @@ class AbstractGP(torch.nn.Module):
         return hist_data
     def _sample(self, seq, n_min, n_max):
         x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
-        return x,x
+        return x
+    def _convert_xb_to_x(self, xb):
+        return xb
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """
         Get the next sampling locations. 
@@ -287,7 +289,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
-        x_next = [self.xxb_seqs[l].getitem(self,slice(self.n[l],n[i]))[0] for i,l in enumerate(task)]
+        x_next = [self.xxb_seqs[l].getitem_x(self,slice(self.n[l],n[i])) for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
@@ -619,12 +621,12 @@ class AbstractGP(torch.nn.Module):
         assert 0<=task<self.num_tasks
         if n is None: n = self.n[task]
         assert n>=0
-        x,xb = self.xxb_seqs[task].getitem(self,slice(0,n))
+        x = self.xxb_seqs[task].getitem_x(self,slice(0,n))
         return x
     def get_xb(self, task, n=None):
         assert 0<=task<self.num_tasks
         if n is None: n = self.n[task]
         assert n>=0
-        x,xb = self.xxb_seqs[task].getitem(self,slice(0,n))
+        xb = self.xxb_seqs[task].getitem_xb(self,slice(0,n))
         return xb
     

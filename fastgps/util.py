@@ -19,23 +19,23 @@ class _XXbSeq(object):
     def __init__(self, fgp, seq):
         self.seq = seq
         self.n = 0
-        self.x = torch.empty((0,seq.d),device=fgp.device)
         self.xb = torch.empty((0,seq.d),dtype=fgp._XBDTYPE,device=fgp.device)
-    def getitem(self, fgp, i):
+    def getitem_xb(self, fgp, i):
         if isinstance(i,int): i = slice(None,i,None)
         if isinstance(i,torch.Tensor):
             assert i.numel()==1 and isinstance(i,torch.int64)
             i = slice(None,i.item(),None)
         assert isinstance(i,slice)
         if i.stop>self.n:
-            x_next,xb_next = fgp._sample(self.seq,self.n,i.stop)
-            if x_next.data_ptr()==xb_next.data_ptr():
-                self.x = self.xb = torch.vstack([self.x,x_next])
-            else:
-                self.x = torch.vstack([self.x,x_next])
-                self.xb = torch.vstack([self.xb,xb_next])
+            xb_next = fgp._sample(self.seq,self.n,i.stop)
+            self.xb = torch.vstack([self.xb,xb_next]).contiguous()
             self.n = i.stop
-        return self.x[i],self.xb[i]
+            del xb_next
+        return self.xb[i]
+    def getitem_x(self, fgp, i):
+        xb = self.getitem_xb(fgp,i)
+        x = fgp._convert_xb_to_x(xb)
+        return x
 
 class _K1PartsSeq(object):
     def __init__(self, fgp, l0, l1, beta, kappa):
@@ -52,8 +52,8 @@ class _K1PartsSeq(object):
             i = slice(None,i.item(),None)
         assert isinstance(i,slice)
         if i.stop>self.n:
-            _,xb_next = fgp.xxb_seqs[self.l0].getitem(fgp,slice(self.n,i.stop))
-            _,xb0 = fgp.xxb_seqs[self.l1].getitem(fgp,slice(0,1))
+            xb_next = fgp.xxb_seqs[self.l0].getitem_xb(fgp,slice(self.n,i.stop))
+            xb0 = fgp.xxb_seqs[self.l1].getitem_xb(fgp,slice(0,1))
             k1parts_next = fgp.kernel.base_kernel.get_per_dim_components(xb_next,xb0,self.beta,self.kappa)
             if not hasattr(self,"k1parts"):
                 self.k1parts = k1parts_next 
