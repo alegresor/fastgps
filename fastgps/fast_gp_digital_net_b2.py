@@ -163,13 +163,13 @@ class FastGPDigitalNetB2(AbstractFastGP):
                 [1.3333, 1.0000],
                 [0.8000, 0.6667]])
         >>> fgp.post_cubature_var()
-        tensor([[4.3368e-19, 3.8242e-09],
-                [5.0432e-09, 6.5173e-09],
-                [8.4400e-09, 1.1051e-08]])
+        tensor([[2.2939e-16, 9.6623e-09],
+                [1.6232e-08, 7.8090e-09],
+                [3.7257e-08, 2.0389e-08]])
         >>> fgp.post_cubature_var(n=4*n)
-        tensor([[1.0842e-19, 1.1605e-10],
-                [1.5354e-10, 1.9670e-10],
-                [2.5281e-10, 3.3069e-10]])
+        tensor([[2.9341e-18, 2.2246e-10],
+                [2.8796e-10, 1.6640e-10],
+                [5.9842e-10, 3.7897e-10]])
     """
     def __init__(self,
             kernel:Union[qp.KernelDigShiftInvar,qp.KernelDigShiftInvarAdaptiveAlpha,qp.KernelDigShiftInvarCombined],
