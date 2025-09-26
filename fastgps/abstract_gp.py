@@ -205,6 +205,7 @@ class AbstractGP(torch.nn.Module):
         stop_crit_iterations_without_improvement_loss = 0
         update_prior_mean = update_prior_mean and (not self.derivatives_flag) and loss_metric!="CV"
         inv_log_det_cache = self.get_inv_log_det_cache()
+        best_params = None
         try:
             pcstd = torch.sqrt(self.post_cubature_var(eval=False))
             can_compute_pcstd = True
@@ -251,8 +252,9 @@ class AbstractGP(torch.nn.Module):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-        self.prior_mean = best_params[0]
-        self.load_state_dict(best_params[1])
+        if best_params is not None:
+            self.prior_mean = best_params[0]
+            self.load_state_dict(best_params[1])
         if store_hists:
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
             hist_data["loss"] = torch.tensor(hist_data["loss"])
