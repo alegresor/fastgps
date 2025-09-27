@@ -178,7 +178,7 @@ class StandardGP(AbstractGP):
 
         >>> d = 4
         >>> n = 2**10
-        >>> dnb2 = qp.DigitalNetB2(d,seed=7) 
+        >>> dnb2 = qp.DigitalNetB2(d,seed=11) 
         >>> kernel = qp.KernelGaussian(d,torchify=True,shape_scale=(2,1),shape_lengthscales=(3,2,d))
         >>> fgp = StandardGP(kernel,dnb2) 
         >>> x = fgp.get_x_next(n) 
@@ -194,13 +194,13 @@ class StandardGP(AbstractGP):
                 [1.3333, 1.0000],
                 [0.8000, 0.6666]])
         >>> fgp.post_cubature_var()
-        tensor([[9.5590e-08, 1.0112e-07],
-                [1.0080e-07, 1.1565e-07],
-                [9.8207e-08, 1.1822e-07]])
+        tensor([[9.7321e-08, 9.9922e-08],
+                [9.8023e-08, 1.9759e-07],
+                [9.7917e-08, 1.4459e-07]])
         >>> fgp.post_cubature_var(n=4*n)
-        tensor([[1.9371e-08, 1.3673e-07],
-                [2.5713e-08, 3.6217e-08],
-                [2.1941e-08, 8.2669e-08]])
+        tensor([[2.5504e-08, 2.4319e-07],
+                [2.2898e-08, 4.8639e-07],
+                [2.4539e-08, 0.0000e+00]])
     """
     def __init__(self,
             kernel:qp.kernel.abstract_kernel.AbstractKernel,
