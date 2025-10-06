@@ -186,6 +186,7 @@ class FastGPLattice(AbstractFastGP):
             derivatives:list = None,
             derivatives_coeffs:list = None,
             adaptive_nugget:bool = False,
+            ptransform:str = None,
             ):
         """
         Args:
@@ -206,6 +207,7 @@ class FastGPLattice(AbstractFastGP):
                 ```
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
+            ptransform (str): periodization transform in `[None, 'BAKER']` where `'BAKER'` is also known as the tent transform.
         """
         self._XBDTYPE = torch.get_default_dtype()
         self._FTOUTDTYPE = torch.complex64 if torch.get_default_dtype()==torch.float32 else torch.complex128
@@ -248,4 +250,5 @@ class FastGPLattice(AbstractFastGP):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform,
         )

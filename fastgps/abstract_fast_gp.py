@@ -153,7 +153,7 @@ class AbstractFastGP(AbstractGP):
         elif not inttask0 and inttask1:
             return pccov[...,:,0]
         else: #not inttask0 and not inttask1
-            return pccov
+            return pccov       
     def get_lam(self, task0, task1, n=None):
         assert 0<=task0<self.num_tasks
         assert 0<=task1<self.num_tasks

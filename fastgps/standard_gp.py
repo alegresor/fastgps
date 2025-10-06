@@ -213,6 +213,7 @@ class StandardGP(AbstractGP):
             derivatives_coeffs:list = None,
             adaptive_nugget:bool = True,
             data:dict = None,
+            ptransform:str = None,
             ):
         """
         Args:
@@ -233,6 +234,7 @@ class StandardGP(AbstractGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
             data (dict): dictory of data with keys 'x' and 'y' where data['x'] and data['y'] are both `torch.Tensor`s or list of `torch.Tensor`s with lengths equal to the number of tasks
+            ptransform (str): periodization transform in `[None, 'BAKER']` where `'BAKER'` is also known as the tent transform.
         """
         self._XBDTYPE = torch.get_default_dtype()
         self._FTOUTDTYPE = torch.get_default_dtype()
@@ -276,6 +278,7 @@ class StandardGP(AbstractGP):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform,
         )
         if data is not None:
             self.add_y_next(data["y"],task=torch.arange(self.num_tasks))
@@ -296,7 +299,7 @@ class StandardGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l)) for l in range(self.num_tasks)],dim=-1)
+        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_xb(l)) for l in range(self.num_tasks)],dim=-1)
         pcmean = self.prior_mean[...,task]+(kints*coeffs[...,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -315,7 +318,7 @@ class StandardGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
         v = inv_log_det_cache.gram_matrix_solve(self,kints.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task,task)
         pcvar = tval-(kints*v).sum(-1)
@@ -343,8 +346,8 @@ class StandardGP(AbstractGP):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(task0,task1)
-        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
-        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_x(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
         v = inv_log_det_cache.gram_matrix_solve(self,kints1.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task0[:,None],task1[None,:])
         pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)

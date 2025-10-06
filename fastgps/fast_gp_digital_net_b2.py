@@ -181,6 +181,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives:list = None,
             derivatives_coeffs:list = None,
             adaptive_nugget:bool = False,
+            ptransform:str = None,
             ):
         """
         Args:
@@ -203,6 +204,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
                 ```
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
+            ptransform (str): periodization transform in `[None, 'BAKER']` where `'BAKER'` is also known as the tent transform.
         """
         self._XBDTYPE = torch.int64
         self._FTOUTDTYPE = torch.get_default_dtype()
@@ -255,6 +257,7 @@ class FastGPDigitalNetB2(AbstractFastGP):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform,
         )
     def _sample(self, seq, n_min, n_max):
         xb = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max),return_binary=True).astype(np.int64)).to(self.device)

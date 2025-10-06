@@ -26,6 +26,7 @@ class AbstractGP(torch.nn.Module):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform
         ):
         super().__init__()
         if not torch.get_default_dtype()==torch.float64:
@@ -114,6 +115,9 @@ class AbstractGP(torch.nn.Module):
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
         self.stable = False # maybe change this in the future if we come across any more calcellation error issues
+        self.ptransform = str(ptransform).upper()
+        if self.ptransform=='TENT': self.ptransform = 'BAKER'
+        assert self.ptransform in ['NONE','BAKER'], "invalid ptransform = %s"%self.ptransform
     def save_params(self, path):
         """ Save the state dict to path 
         
@@ -339,7 +343,14 @@ class AbstractGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+        if self.ptransform=="NONE":
+            kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+        elif self.ptransform=="BAKER":
+            kmat_left = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_right = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat = 1/2*(kmat_left+kmat_right)
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
         pmean = self.prior_mean[...,task,None]+torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -370,12 +381,36 @@ class AbstractGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
-        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat_perm)
-        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
-        diag = kmat_new-(t*kmat).sum(-1)
+        if self.ptransform=='NONE':
+            kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
+            t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat_perm)
+            t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+            diag = kmat_new-(t*kmat).sum(-1)
+        elif self.ptransform=='BAKER':
+            kmat_new_1 = torch.cat([self.kernel(task[l0],task[l0],x/2,x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_1 = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_1 = torch.permute(kmat_1,[-3,-2]+[i for i in range(kmat_1.ndim-3)]+[-1])
+            t_perm_1 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_1)
+            t_1 = torch.permute(t_perm_1,[2+i for i in range(t_perm_1.ndim-3)]+[0,1,-1])
+            diag_1 = kmat_new_1-(t_1*kmat_1).sum(-1)
+            kmat_new_2 = torch.cat([self.kernel(task[l0],task[l0],1-x/2,1-x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_2 = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_2 = torch.permute(kmat_2,[-3,-2]+[i for i in range(kmat_2.ndim-3)]+[-1])
+            t_perm_2 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_2)
+            t_2 = torch.permute(t_perm_2,[2+i for i in range(t_perm_2.ndim-3)]+[0,1,-1])
+            diag_2 = kmat_new_2-(t_2*kmat_2).sum(-1)
+            kmat_new_3 = torch.cat([self.kernel(task[l0],task[l0],x/2,1-x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_3 = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_p3 = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_3 = torch.permute(kmat_p3,[-3,-2]+[i for i in range(kmat_p3.ndim-3)]+[-1])
+            t_perm_3 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_3)
+            t_3 = torch.permute(t_perm_3,[2+i for i in range(t_perm_3.ndim-3)]+[0,1,-1])
+            diag_3 = kmat_new_3-(t_3*kmat_3).sum(-1)
+            diag = 1/4*(diag_1+diag_2+2*diag_3)
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
         diag[diag<0] = 0 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -414,14 +449,29 @@ class AbstractGP(torch.nn.Module):
         if inttask1: task1 = torch.tensor([task1],dtype=int,device=self.device)
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
-        equal = torch.equal(x0,x1) and torch.equal(task0,task1)
-        kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
-        kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
-        kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
-        kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
-        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
-        kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+        if self.ptransform=="NONE":
+            equal = torch.equal(x0,x1) and torch.equal(task0,task1)
+            kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
+            kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+            kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
+            kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
+            t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
+            t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+            kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+        elif self.ptransform=="BAKER":
+            kmat = 0
+            for x0i,x1i in [[x0/2,x1/2],[x0/2,1-x1/2],[1-x0/2,x1/2],[1-x0/2,1-x1/2]]:
+                equal = torch.equal(x0i,x1i) and torch.equal(task0,task1)
+                kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0i[:,None,:],x1i[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
+                kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0i[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+                kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1i[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
+                kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
+                t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
+                t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+                kmat += kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+            kmat = kmat/4
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
         if equal:
             tmesh,nmesh = torch.meshgrid(torch.arange(kmat.size(0),device=self.device),torch.arange(x0.size(0),device=x0.device),indexing="ij")            
             tidx,nidx = tmesh.ravel(),nmesh.ravel()

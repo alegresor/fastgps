@@ -35,6 +35,12 @@ class _XXbSeq(object):
     def getitem_x(self, fgp, i):
         xb = self.getitem_xb(fgp,i)
         x = fgp._convert_xb_to_x(xb)
+        if fgp.ptransform=="NONE":
+            pass
+        elif fgp.ptransform=="BAKER":
+            x = 1-2*torch.abs(x-1/2)
+        else:
+            raise Exception("invalid ptransform = %s"%fgp.ptransform)
         return x
 
 class _K1PartsSeq(object):
@@ -335,7 +341,7 @@ class _StandardInverseLogDetCache:
     def __call__(self, fgp):
         if not hasattr(self,"thetainv") or not _frozen_equal(fgp,self.state_dict) or _force_recompile(fgp):
             kmat_tasks = fgp.kernel.taskmat
-            kmat_lower_tri = [[kmat_tasks[...,l0,l1,None,None]*fgp.kernel.base_kernel(fgp.get_x(l0,self.n[l0])[:,None,:],fgp.get_x(l1,self.n[l1])[None,:,:],*fgp.derivatives_cross[l0][l1],fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(fgp.num_tasks)]
+            kmat_lower_tri = [[kmat_tasks[...,l0,l1,None,None]*fgp.kernel.base_kernel(fgp.get_xb(l0,self.n[l0])[:,None,:],fgp.get_xb(l1,self.n[l1])[None,:,:],*fgp.derivatives_cross[l0][l1],fgp.derivatives_coeffs_cross[l0][l1]) for l1 in range(l0+1)] for l0 in range(fgp.num_tasks)]
             if fgp.adaptive_nugget:
                 assert fgp.noise.size(-1)==1
                 n0range = torch.arange(self.n[0],device=fgp.device)
