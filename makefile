@@ -18,4 +18,4 @@ fix_nbtests:
 fix: fix_doctests fix_nbtests
 
 mkdocs_serve:
-	cp README.md docs/index.md & mkdocs serve
+	cp README.md docs/index.md & mkdocs serve --livereload

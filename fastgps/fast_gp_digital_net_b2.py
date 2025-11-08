@@ -193,7 +193,6 @@ class FastGPDigitalNetB2(AbstractFastGP):
                 ```
                 See the <a href="https://qp.readthedocs.io/en/latest/algorithms.html#module-qp.discrete_distribution.digital_net_b2.digital_net_b2" target="_blank">`qp.DigitalNetB2` docs</a> for more info. 
                 If `num_tasks==1` then randomize may be in `["FALSE","DS","LMS","LMS DS"]`. 
-            alpha (int): smoothness parameter
             noise (float): positive noise variance i.e. nugget term
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_noise (bool): wheather or not to optimize the noise parameter

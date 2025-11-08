@@ -41,8 +41,12 @@ A reference standard GP implementation is available alongside the fast GPR imple
 
 This package is based off of the following publications
 
-1. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using lattice sampling." Statistics and Computing 29.6 (2019): 1215-1229.
+1. Sorokin, Aleksei, Pieterjan Robbe, and Fred J. Hickernell. "Fast Gaussian process regression for high dimensional functions with derivative information." First International Conference on Probabilistic Numerics. PMLR, 2025.
 
-2. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using Sobol’ sampling." Advances in Modeling and Simulation: Festschrift for Pierre L'Ecuyer. Cham: Springer International Publishing, 2022. 301-318.
+2. Sorokin, Aleksei G., et al. "Fast Bayesian Multilevel Quasi-Monte Carlo." arXiv preprint arXiv:2510.24604 (2025).
 
-3. Rathinavel, Jagadeeswaran. Fast automatic Bayesian cubature using matching kernels and designs. Illinois Institute of Technology, 2019.
+3. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using lattice sampling." Statistics and Computing 29.6 (2019): 1215-1229.
+
+4. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using Sobol’ sampling." Advances in Modeling and Simulation: Festschrift for Pierre L'Ecuyer. Cham: Springer International Publishing, 2022. 301-318.
+
+5. Rathinavel, Jagadeeswaran. Fast automatic Bayesian cubature using matching kernels and designs. Illinois Institute of Technology, 2019.
