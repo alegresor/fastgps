@@ -28,6 +28,10 @@ nav:
     - Visualization: examples/mlqmc/visual.ipynb
   - Publications:
     - ProbNum25: examples/probnum25_paper/probnum25_paper.ipynb
+  - Miscellaneous: 
+    - Periodization: docs/examples/misc/periodization.ipynb
+    - Periodization: docs/examples/misc/random_fourier_features.ipynb
+
 
 plugins:
   - search
