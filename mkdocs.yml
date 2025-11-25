@@ -27,7 +27,8 @@ nav:
     - Comparison of GPs: examples/mlqmc/comparison.ipynb
     - Visualization: examples/mlqmc/visual.ipynb
   - Publications:
-    - ProbNum25: examples/probnum25_paper/probnum25_paper.ipynb
+    - ProbNum25: examples/papers/probnum25/probnum25.ipynb
+    - FMTGPs: examples/papers/fmtgps/fmtgps.ipynb
   - Miscellaneous: 
     - Periodization: docs/examples/misc/periodization.ipynb
     - Periodization: docs/examples/misc/random_fourier_features.ipynb
