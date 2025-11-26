@@ -153,23 +153,23 @@ class FastGPDigitalNetB2(AbstractFastGP):
         >>> x = fgp.get_x_next(n) 
         >>> x.shape
         torch.Size([1024, 4])
-        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y = 10000*(x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
         >>> y.shape
         torch.Size([3, 2, 1024])
         >>> fgp.add_y_next(y) 
         >>> data = fgp.fit(verbose=0)
         >>> fgp.post_cubature_mean()
-        tensor([[4.0000, 2.0000],
-                [1.3333, 1.0000],
-                [0.8000, 0.6667]])
+        tensor([[40000.0000, 20000.0000],
+                [13333.3339, 10000.0295],
+                [ 8000.0584,  6666.7488]])
         >>> fgp.post_cubature_var()
-        tensor([[2.2939e-16, 9.6623e-09],
-                [1.6232e-08, 7.8090e-09],
-                [3.7257e-08, 2.0389e-08]])
+        tensor([[5.0741e-17, 7.1670e+00],
+                [6.2184e+00, 7.1670e+00],
+                [6.2182e+00, 7.1665e+00]])
         >>> fgp.post_cubature_var(n=4*n)
-        tensor([[2.9341e-18, 2.2246e-10],
-                [2.8796e-10, 1.6640e-10],
-                [5.9842e-10, 3.7897e-10]])
+        tensor([[0.0000, 7.1591],
+                [6.2120, 7.1591],
+                [6.2111, 7.1559]])
     """
     def __init__(self,
             kernel:Union[qp.KernelDigShiftInvar,qp.KernelDigShiftInvarAdaptiveAlpha,qp.KernelDigShiftInvarCombined],
