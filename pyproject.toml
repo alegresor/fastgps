@@ -44,6 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "umbridge >= 1.2.4",
     "pytest >= 8.3.5",
     "nbval >= 0.10.0",
     "jupyterlab >= 4.0.0",
