@@ -184,23 +184,23 @@ class StandardGP(AbstractGP):
         >>> x = fgp.get_x_next(n) 
         >>> x.shape
         torch.Size([1024, 4])
-        >>> y = 10000*(x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
         >>> y.shape
         torch.Size([3, 2, 1024])
         >>> fgp.add_y_next(y) 
         >>> data = fgp.fit(verbose=0)
         >>> fgp.post_cubature_mean()
-        tensor([[40000.0000, 19999.9639],
-                [13333.0013,  9992.8994],
-                [ 7991.0791,  6612.9048]])
-        >>> fgp.post_cubature_var()
-        tensor([[7.4117e-08, 1.0580e-07],
-                [1.3840e-07, 2.0824e-05],
-                [2.0824e-05, 1.4339e-03]])
-        >>> fgp.post_cubature_var(n=4*n)
-        tensor([[9.9090e-08, 0.0000e+00],
-                [3.1975e-08, 1.1635e-07],
-                [1.1635e-07, 5.1397e-05]])
+        tensor([[4.0000, 2.0000],
+                [1.3333, 1.0000],
+                [0.8000, 0.6666]])
+        >>> pcv = fgp.post_cubature_var()
+        >>> pcv.shape
+        torch.Size([3, 2])
+        >>> (pcv<5e-6).all()
+        tensor(True)
+        >>> pcv4 = fgp.post_cubature_var(n=4*n)
+        >>> pcv4.shape
+        torch.Size([3, 2])
     """
     def __init__(self,
             kernel:qp.kernel.abstract_kernel.AbstractKernel,

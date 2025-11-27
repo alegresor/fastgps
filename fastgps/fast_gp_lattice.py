@@ -158,19 +158,19 @@ class FastGPLattice(AbstractFastGP):
         >>> x = fgp.get_x_next(n) 
         >>> x.shape
         torch.Size([1024, 4])
-        >>> y = 10000*(x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
         >>> y.shape
         torch.Size([3, 2, 1024])
         >>> fgp.add_y_next(y) 
         >>> data = fgp.fit(verbose=0)
         >>> fgp.post_cubature_mean()
-        tensor([[40000.0000, 20001.0341],
-                [13334.3688, 10001.0361],
-                [ 8001.0368,  6667.7041]])
+        tensor([[4.0000, 2.0001],
+                [1.3334, 1.0001],
+                [0.8001, 0.6668]])
         >>> fgp.post_cubature_var()
-        tensor([[6.5335e-05, 6.1809e-04],
-                [6.1809e-04, 6.1809e-04],
-                [6.1809e-04, 6.1809e-04]])
+        tensor([[0.0008, 0.0008],
+                [0.0008, 0.0008],
+                [0.0008, 0.0008]])
         >>> fgp.post_cubature_var(n=4*n)
         tensor([[0., 0.],
                 [0., 0.],
