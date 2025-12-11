@@ -1,13 +1,15 @@
 from .abstract_gp import AbstractGP
 from .util import (
     DummyDiscreteDistrib,
-    _StandardInverseLogDetCache,
+    _StandardInverseLogDetCache
 )
 import torch
 import numpy as np
-import qmcpy
+import qmcpy as qp
 from typing import Tuple,Union
 
+
+    
 class StandardGP(AbstractGP):
     """
     Standard Gaussian process regression
@@ -30,8 +32,8 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 2
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelSquaredExponential(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelSquaredExponential(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
@@ -54,7 +56,7 @@ class StandardGP(AbstractGP):
         []
 
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0577)
+        tensor(0.0472)
         >>> z = torch.rand((2**8,d),generator=rng).to(device)
         >>> pcov = sgp.post_cov(x,z)
         >>> pcov.shape
@@ -80,15 +82,15 @@ class StandardGP(AbstractGP):
         torch.Size([128])
 
         >>> sgp.post_cubature_mean()
-        tensor(20.3584)
+        tensor(20.3665)
         >>> sgp.post_cubature_var()
-        tensor(0.0035)
+        tensor(0.0015)
 
         >>> pcmean,pcvar,q,pcci_low,pcci_high = sgp.post_cubature_ci(confidence=0.99)
         >>> pcci_low
-        tensor(20.2069)
+        tensor(20.2684)
         >>> pcci_high
-        tensor(20.5098)
+        tensor(20.4647)
         
         >>> pcov_future = sgp.post_cov(x,z,n=2*n)
         >>> pvar_future = sgp.post_var(x,n=2*n)
@@ -98,7 +100,7 @@ class StandardGP(AbstractGP):
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0848)
+        tensor(0.0589)
 
         >>> torch.allclose(sgp.post_cov(x,z),pcov_future)
         True
@@ -109,17 +111,17 @@ class StandardGP(AbstractGP):
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0565)
+        tensor(0.0440)
 
         >>> x_next = sgp.get_x_next(4*n)
         >>> y_next = f_ackley(x_next)
         >>> sgp.add_y_next(y_next)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.1515)
+        tensor(0.0923)
 
         >>> data = sgp.fit(verbose=False)
         >>> torch.linalg.norm(y-sgp.post_mean(x))/torch.linalg.norm(y)
-        tensor(0.0555)
+        tensor(0.0412)
 
         >>> pcov_16n = sgp.post_cov(x,z,n=16*n)
         >>> pvar_16n = sgp.post_var(x,n=16*n)
@@ -139,8 +141,8 @@ class StandardGP(AbstractGP):
         >>> n = 2**6
         >>> d = 3
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelSquaredExponential(d,torchify=True,device=device),
-        ...     qmcpy.DigitalNetB2(dimension=d,seed=7))
+        ...     qp.KernelMatern52(d,torchify=True,device=device),
+        ...     qp.DigitalNetB2(dimension=d,seed=7))
         >>> x_next = sgp.get_x_next(n)
         >>> y_next = torch.stack([torch.sin(x_next).sum(-1),torch.cos(x_next).sum(-1)],axis=0)
         >>> sgp.add_y_next(y_next)
@@ -160,8 +162,8 @@ class StandardGP(AbstractGP):
         ...     torch.stack([4*torch.sin(2*np.pi*x[1][:,0]),4*torch.cos(2*np.pi*x[1][:,0]),4*torch.acos(x[1][:,0])],dim=0).to(device),
         ... ]
         >>> sgp = StandardGP(
-        ...     qmcpy.KernelMultiTask(
-        ...         qmcpy.KernelGaussian(d=1,torchify=True,device=device),
+        ...     qp.KernelMultiTask(
+        ...         qp.KernelGaussian(d=1,torchify=True,device=device),
         ...         num_tasks = 2,
         ...     ),
         ...     seqs={"x":x,"y":y},
@@ -171,27 +173,56 @@ class StandardGP(AbstractGP):
         >>> xticks = torch.linspace(0,1,101,device=device) 
         >>> pmean,pvar,q,pci_low,pci_high = sgp.post_ci(xticks[:,None])
         >>> pcmean,pcvar,q,pcci_low,pcci_high =  sgp.post_cubature_ci()
+
+        Batch Inference 
+
+        >>> d = 4
+        >>> n = 2**10
+        >>> dnb2 = qp.DigitalNetB2(d,seed=11) 
+        >>> kernel = qp.KernelGaussian(d,torchify=True,shape_scale=(2,1),shape_lengthscales=(3,2,d))
+        >>> fgp = StandardGP(kernel,dnb2) 
+        >>> x = fgp.get_x_next(n) 
+        >>> x.shape
+        torch.Size([1024, 4])
+        >>> y = (x**torch.arange(6).reshape((3,2))[:,:,None,None]).sum(-1)
+        >>> y.shape
+        torch.Size([3, 2, 1024])
+        >>> fgp.add_y_next(y) 
+        >>> data = fgp.fit(verbose=0)
+        >>> fgp.post_cubature_mean()
+        tensor([[4.0000, 2.0000],
+                [1.3333, 1.0000],
+                [0.8000, 0.6666]])
+        >>> pcv = fgp.post_cubature_var()
+        >>> pcv.shape
+        torch.Size([3, 2])
+        >>> (pcv<5e-6).all()
+        tensor(True)
+        >>> pcv4 = fgp.post_cubature_var(n=4*n)
+        >>> pcv4.shape
+        torch.Size([3, 2])
     """
     def __init__(self,
-            kernel:qmcpy.kernel.abstract_kernel.AbstractKernel,
-            seqs:Union[qmcpy.IIDStdUniform,int],
+            kernel:qp.kernel.abstract_kernel.AbstractKernel,
+            seqs:Union[qp.IIDStdUniform,int],
             noise:float = 1e-4,
-            tfs_noise:Tuple[callable,callable] = (qmcpy.util.transforms.tf_exp_eps_inv,qmcpy.util.transforms.tf_exp_eps),
+            tfs_noise:Tuple[callable,callable] = (qp.util.transforms.tf_exp_eps_inv,qp.util.transforms.tf_exp_eps),
             requires_grad_noise:bool = False, 
             shape_noise:torch.Size = torch.Size([1]),
             derivatives:list = None,
             derivatives_coeffs:list = None,
             adaptive_nugget:bool = True,
             data:dict = None,
+            ptransform:str = None,
             ):
         """
         Args:
-            kernel (qmcpy.AbstractKernel): Kernel object. Set to `qmcpy.KernelMultiTask` for a multi-task GP.
-            seqs (Union[int,qmcpy.DiscreteDistribution,List]]): list of sequence generators. If an int `seed` is passed in we use 
+            kernel (qp.AbstractKernel): Kernel object. Set to `qp.KernelMultiTask` for a multi-task GP.
+            seqs (Union[int,qp.DiscreteDistribution,List]]): list of sequence generators. If an int `seed` is passed in we use 
                 ```python
-                [qmcpy.DigitalNetB2(d,seed=seed_i) for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
+                [qp.DigitalNetB2(d,seed=seed_i) for seed_i in np.random.SeedSequence(seed).spawn(num_tasks)]
                 ```
-                See the <a href="https://qmcpy.readthedocs.io/en/latest/algorithms.html#discrete-distribution-class" target="_blank">`qmcpy.DiscreteDistribution` docs</a> for more info. 
+                See the <a href="https://qp.readthedocs.io/en/latest/algorithms.html#discrete-distribution-class" target="_blank">`qp.DiscreteDistribution` docs</a> for more info. 
             noise (float): positive noise variance i.e. nugget term
             tfs_noise (Tuple[callable,callable]): the first argument transforms to the raw value to be optimized, the second applies the inverse transform
             requires_grad_noise (bool): wheather or not to optimize the noise parameter
@@ -203,10 +234,11 @@ class StandardGP(AbstractGP):
             derivatives_coeffs (list): list of derivative coefficients where if `derivatives[k].shape==(p,d)` then we should have `derivatives_coeffs[k].shape==(p,)`
             adaptive_nugget (bool): if True, use the adaptive nugget which modifies noises based on trace ratios.  
             data (dict): dictory of data with keys 'x' and 'y' where data['x'] and data['y'] are both `torch.Tensor`s or list of `torch.Tensor`s with lengths equal to the number of tasks
+            ptransform (str): periodization transform in `[None, 'BAKER']` where `'BAKER'` is also known as the tent transform.
         """
         self._XBDTYPE = torch.get_default_dtype()
         self._FTOUTDTYPE = torch.get_default_dtype()
-        if isinstance(kernel,qmcpy.KernelMultiTask):
+        if isinstance(kernel,qp.KernelMultiTask):
             solo_task = False
             num_tasks = kernel.num_tasks
             default_task = torch.arange(num_tasks)
@@ -226,8 +258,8 @@ class StandardGP(AbstractGP):
             data = None
             if isinstance(seqs,int):
                 global_seed = seqs
-                seqs = np.array([qmcpy.DigitalNetB2(kernel.d,seed=seed,order="GRAY") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
-            if isinstance(seqs,qmcpy.DiscreteDistribution):
+                seqs = np.array([qp.DigitalNetB2(kernel.d,seed=seed,order="GRAY") for seed in np.random.SeedSequence(global_seed).spawn(num_tasks)],dtype=object)
+            if isinstance(seqs,qp.DiscreteDistribution):
                 seqs = np.array([seqs],dtype=object)
             if isinstance(seqs,list):
                 seqs = np.array(seqs,dtype=object)
@@ -246,6 +278,7 @@ class StandardGP(AbstractGP):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform,
         )
         if data is not None:
             self.add_y_next(data["y"],task=torch.arange(self.num_tasks))
@@ -254,7 +287,7 @@ class StandardGP(AbstractGP):
         assert isinstance(n,torch.Tensor) and n.shape==(self.num_tasks,) and (n>=self.n).all()
         ntup = tuple(n.tolist())
         if ntup not in self.inv_log_det_cache_dict.keys():
-            self.inv_log_det_cache_dict[ntup] = _StandardInverseLogDetCache(self,n)
+            self.inv_log_det_cache_dict[ntup] = _StandardInverseLogDetCache(n)
         return self.inv_log_det_cache_dict[ntup]
     def post_cubature_mean(self, task:Union[int,torch.Tensor]=None, eval:bool=True, integrate_unit_cube:bool=True):
         coeffs = self.coeffs
@@ -266,8 +299,8 @@ class StandardGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l)) for l in range(self.num_tasks)],dim=-1)
-        pcmean = (kints*coeffs[...,None,:]).sum(-1)
+        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_xb(l)) for l in range(self.num_tasks)],dim=-1)
+        pcmean = self.prior_mean[...,task]+(kints*coeffs[...,None,:]).sum(-1)
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pcmean[...,0] if inttask else pcmean
@@ -285,8 +318,8 @@ class StandardGP(AbstractGP):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        v = inv_log_det_cache.gram_matrix_solve(kints.movedim(-2,0)).movedim(0,-2)
+        kints = torch.cat([self.kernel.single_integral_01d(task[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        v = inv_log_det_cache.gram_matrix_solve(self,kints.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task,task)
         pcvar = tval-(kints*v).sum(-1)
         pcvar[pcvar<0] = 0.
@@ -313,9 +346,9 @@ class StandardGP(AbstractGP):
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
         equal = torch.equal(task0,task1)
-        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_x(l,n=n[l])) for l in range(self.num_tasks)],dim=-1)
-        v = inv_log_det_cache.gram_matrix_solve(kints1.movedim(-2,0)).movedim(0,-2)
+        kints0 = torch.cat([self.kernel.single_integral_01d(task0[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        kints1 = kints0 if equal else torch.cat([self.kernel.single_integral_01d(task1[:,None],l,self.get_xb(l,n[l])) for l in range(self.num_tasks)],dim=-1)
+        v = inv_log_det_cache.gram_matrix_solve(self,kints1.movedim(-2,0)).movedim(0,-2)
         tval = self.kernel.double_integral_01d(task0[:,None],task1[None,:])
         pccov = tval-(kints0[...,:,None,:]*v[...,None,:,:]).sum(-1)
         if equal:

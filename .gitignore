@@ -9,6 +9,8 @@ debug.py
 *.DS_Store
 *.pth
 docs/index.md
+*.pt
+*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

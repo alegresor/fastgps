@@ -11,7 +11,9 @@ nav:
     - Fast GP Net: examples/multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/multitask/fgp_lattice.ipynb
     - Standard GP: examples/multitask/standard_gp.ipynb
-    - Compare GPs: examples/multitask/compare_gps_plot.ipynb
+    - Compare GPs 1d: examples/multitask/compare_1d_gps_plot.ipynb
+    - Compare GPs 2d: examples/multitask/compare_2d_gps_plot.ipynb
+    - Elliptic PDE: examples/multitask/elliptic_pde.ipynb
   - Batch Multitask Examples:
     - Fast GP Net: examples/batch_multitask/fgp_dnb2.ipynb
     - Fast GP Lattice: examples/batch_multitask/fgp_lattice.ipynb
@@ -21,19 +23,46 @@ nav:
     - Fast GP Lattice: examples/derivative_informed/fgp_lattice.ipynb
     - Standard GP: examples/derivative_informed/standard_gp.ipynb
     - Compare GPs: examples/derivative_informed/compare_gps_plot.ipynb
+  - Multilevel Quasi-Monte Carlo:
+    - Comparison of GPs: examples/mlqmc/comparison.ipynb
+    - Visualization: examples/mlqmc/visual.ipynb
   - Publications:
-    - ProbNum25: examples/probnum25_paper/probnum25_paper.ipynb
+    - ProbNum25: examples/papers/probnum25/probnum25.ipynb
+    - FMTGPs: examples/papers/fmtgps/fmtgps.ipynb
+  - Miscellaneous: 
+    - Periodization: docs/examples/misc/periodization.ipynb
+    - Periodization: docs/examples/misc/random_fourier_features.ipynb
+    - KISS Net: docs/examples/misc/kiss_gp_dnets.ipynb
 
-  
+
 plugins:
+  - search
   - mkdocs-jupyter:
-      ignore_h1_titles: True
+      ignore_h1_titles: true    # Include H1 from notebooks
+      execute: false              # Execute notebooks during build
+      include_source: true       # Add download link for source notebooks
+      # theme: dark               # Use dark theme for code cells
+      # include: ["*.ipynb"]  # File patterns to include
+      # execute_ignore: []  # Skip certain files
+      # allow_errors: false        # Fail build on notebook errors
+      # kernel_name: python3       # Specify kernel to use
+      # show_input: true          # Show input cells by default
+      # no_input: false           # Don't hide all inputs
+      # remove_tag_config:
+      #   remove_cell_tags:
+      #     - "hide"              # Hide cells with these tags
+      #     - "hide-cell"
+      #   remove_all_outputs_tags:
+      #     - "hide-output"       # Hide outputs for tagged cells
+      #   remove_input_tags:
+      #     - "hide-input"        # Hide input for tagged cells
   - mkdocstrings:
       #enabled: !ENV [ENABLE_MKDOCSTRINGS, true]
       #custom_templates: templates
       default_handler: python
       handlers:
         python:
+          paths: [fastgps]  # search packages in the src folder
           options:
             members_order: source
             show_root_toc_entry: false
@@ -46,16 +75,36 @@ plugins:
             docstring_options:
               ignore_init_summary: false
             merge_init_into_class: true
+  
 theme:
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+      primary: green
+    # Palette toggle for dark mode
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+      primary: green
   name: material
-  navigation_depth: 5
+  navigation_depth: 6
   color_mode: auto
   user_color_mode_toggle: True
   features:
+    # - navigation.instant
     - navigation.expand
     - toc.follow
     - navigation.sections
     - toc.integrate
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
   icon:
     admonition:
       note: octicons/tag-16
@@ -74,10 +123,24 @@ markdown_extensions:
   - toc
   - attr_list
   - admonition
+  # - mdx_math
+  - extra
   - pymdownx.superfences
   - pymdownx.details
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+
 extra_javascript:
-  - javascripts/mathjax.js
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+extra_css:
+  - https://unpkg.com/katex@0/dist/katex.min.css

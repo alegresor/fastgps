@@ -2,7 +2,7 @@ import torch
 
 def plot_fastgps_fit_data(
         fit_data, 
-        keys, 
+        keys = None, 
         fsf_cols = 5, 
         fsf_rows = 5, 
         tight_layout = True, 
@@ -31,6 +31,8 @@ def plot_fastgps_fit_data(
         ax (np.ndarray): array of `matplotlib.axes._axes.Axes`
     """
     from matplotlib import pyplot
+    if keys is None:
+        keys = list(fit_data.keys())
     if isinstance(keys,str):
         keys = [keys] 
     keys = list(keys)

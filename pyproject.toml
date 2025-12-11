@@ -36,7 +36,7 @@ license = "MIT"
 dynamic = ["version"]
 requires-python = ">= 3.7"
 dependencies = [
-    "qmcpy >= 2.0",
+    "qmcpy >= 2.0.0.1c4",
     "torch >= 2.0.0",
     "numpy >= 1.17.0",
     "scipy >= 1.13.0",
@@ -44,10 +44,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "umbridge >= 1.2.4",
     "pytest >= 8.3.5",
     "nbval >= 0.10.0",
     "jupyterlab >= 4.0.0",
     "matplotlib >= 3.9.0",
+    "seaborn >= 0.13.2",
     "tueplots >= 0.2.0",
     "pandas >= 2.0.0",
     "mkdocs >= 1.5.0",

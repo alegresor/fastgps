@@ -1,10 +1,9 @@
 from .util import (
-    _XXbSeq,
-    _CoeffsCache,
+    _freeze,_frozen_equal,_force_recompile,_XXbSeq
 )
 import torch
 import numpy as np 
-import qmcpy 
+import qmcpy as qp 
 import scipy.stats 
 import os
 from typing import Union,List
@@ -27,6 +26,7 @@ class AbstractGP(torch.nn.Module):
             derivatives,
             derivatives_coeffs,
             adaptive_nugget,
+            ptransform
         ):
         super().__init__()
         if not torch.get_default_dtype()==torch.float64:
@@ -47,21 +47,22 @@ class AbstractGP(torch.nn.Module):
         self.solo_task = solo_task
         self.task_range = torch.arange(num_tasks,device=self.device)
         if solo_task:
-            self.kernel = qmcpy.KernelMultiTask(
+            self.kernel = qp.KernelMultiTask(
                 base_kernel = self.kernel,
                 num_tasks = 1, 
                 factor = 1.,
                 diag =  0.,
                 requires_grad_factor = False, 
                 requires_grad_diag = False,
-                tfs_diag = (qmcpy.util.transforms.tf_identity,qmcpy.util.transforms.tf_identity),
+                tfs_diag = (qp.util.transforms.tf_identity,qp.util.transforms.tf_identity),
                 rank_factor = 1)
-        assert isinstance(self.kernel,qmcpy.KernelMultiTask)
+        assert isinstance(self.kernel,qp.KernelMultiTask)
         # seqs setup 
         assert isinstance(seqs,np.ndarray) and seqs.shape==(self.num_tasks,)
         assert all(seqs[i].d==self.d for i in range(self.num_tasks))
         self.seqs = seqs
         self.n = torch.zeros(self.num_tasks,dtype=int,device=self.device)
+        self.n_cumsum = torch.zeros(self.num_tasks,dtype=int,device=self.device)
         self.m = -1*torch.ones(self.num_tasks,dtype=int,device=self.device)
         # derivatives setup 
         if derivatives is None: derivatives = [torch.zeros((1,self.d),dtype=torch.int64,device=self.device) for i in range(self.num_tasks)]
@@ -74,6 +75,9 @@ class AbstractGP(torch.nn.Module):
         assert all((derivatives_coeffs[i].ndim==1 and len(derivatives_coeffs[i]))==len(derivatives[i]) for i in range(self.num_tasks))
         self.derivatives_cross = [[[None,None] for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
         self.derivatives_coeffs_cross = [[None for l1 in range(self.num_tasks)] for l0 in range(self.num_tasks)]
+        self.derivatives_flag = any((derivatives_i!=0).any() for derivatives_i in derivatives) 
+        if not self.derivatives_flag:
+            assert all((derivatives_coeffs_i==1).all() for derivatives_coeffs_i in derivatives_coeffs) 
         for l0 in range(self.num_tasks):
             p0r = torch.arange(len(derivatives_coeffs[l0]),device=self.device)
             for l1 in range(l0+1):
@@ -88,18 +92,20 @@ class AbstractGP(torch.nn.Module):
                     self.derivatives_cross[l1][l0][1] = self.derivatives_cross[l0][l1][0]
                     self.derivatives_coeffs_cross[l1][l0] = self.derivatives_coeffs_cross[l0][l1]
         # noise
-        self.raw_noise,self.tf_noise = self.kernel.parse_assign_param(
+        self.raw_noise = self.kernel.parse_assign_param(
             pname = "noise",
             param = noise,
             shape_param = shape_noise,
             requires_grad_param = requires_grad_noise,
             tfs_param = tfs_noise,
             endsize_ops = [1],
-            constraints = ["POSITIVE"])
+            constraints = ["NON-NEGATIVE"])
+        self.tfs_noise = tfs_noise
+        self.prior_mean = torch.zeros(self.num_tasks,device=self.device)
         # storage and dynamic caches
         self._y = [torch.empty(0,device=self.device) for l in range(self.num_tasks)]
         self.xxb_seqs = np.array([_XXbSeq(self,self.seqs[i]) for i in range(self.num_tasks)],dtype=object)
-        self.coeffs_cache = _CoeffsCache(self)
+        self.n_x = torch.zeros(self.num_tasks,dtype=int)
         self.inv_log_det_cache_dict = {}
         # derivative multitask setting checks 
         if any((derivatives[i]>0).any() or (derivatives_coeffs[i]!=1).any() for i in range(self.num_tasks)):
@@ -108,6 +114,10 @@ class AbstractGP(torch.nn.Module):
             assert (self.kernel.taskmat==1).all()
         self.adaptive_nugget = adaptive_nugget
         self.batch_param_names = ["noise"]
+        self.stable = False # maybe change this in the future if we come across any more calcellation error issues
+        self.ptransform = str(ptransform).upper()
+        if self.ptransform=='TENT': self.ptransform = 'BAKER'
+        assert self.ptransform in ['NONE','BAKER'], "invalid ptransform = %s"%self.ptransform
     def save_params(self, path):
         """ Save the state dict to path 
         
@@ -138,6 +148,7 @@ class AbstractGP(torch.nn.Module):
             verbose:int = 5,
             verbose_indent:int = 4,
             cv_weights:torch.Tensor = 1,
+            update_prior_mean:bool = True,
             ):
         """
         Args:
@@ -151,6 +162,7 @@ class AbstractGP(torch.nn.Module):
             verbose (int): log every `verbose` iterations, set to `0` for silent mode
             verbose_indent (int): size of the indent to be applied when logging, helpful for logging multiple models
             cv_weights (Union[str,torch.Tensor]): weights for cross validation
+            update_prior_mean (bool): if `True`, then update the prior mean to optimize the loss.
             
         Returns:
             hist_data (dict): iteration history data.
@@ -179,6 +191,7 @@ class AbstractGP(torch.nn.Module):
             hist_data["iteration"] = []
             hist_data["loss"] = []
             hist_data["best_loss"] = []
+            hist_data["prior_mean"] = []
             for pname in self.batch_param_names:
                 hist_data[pname] = []
             for pname in self.kernel.batch_param_names:
@@ -188,50 +201,47 @@ class AbstractGP(torch.nn.Module):
         else:
             hist_data = {}
         if verbose:
-            _s = "%16s | %-10s | %-10s | %-10s | %-10s"%("iter of %.1e"%iterations,"best loss","loss","term1","term2")
+            _s = "%16s | %-10s | %-10s"%("iter of %.1e"%iterations,"best loss","loss")
             print(" "*verbose_indent+_s)
             print(" "*verbose_indent+"~"*len(_s))
         stop_crit_best_loss = torch.inf 
         stop_crit_save_loss = torch.inf 
         stop_crit_iterations_without_improvement_loss = 0
-        os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+        update_prior_mean = update_prior_mean and (not self.derivatives_flag) and loss_metric!="CV"
         inv_log_det_cache = self.get_inv_log_det_cache()
+        best_params = None
+        try:
+            pcstd = torch.sqrt(self.post_cubature_var(eval=False))
+            can_compute_pcstd = True
+        except Exception as e:
+            if "parsed_single_integral_01d" not in str(e): raise
+            can_compute_pcstd = False
         for i in range(iterations+1):
-            if loss_metric=="GCV":
-                numer,denom = inv_log_det_cache.get_gcv_numer_denom()
-                term1 = numer 
-                term2 = denom
-                loss = (term1/term2).sum()
-            elif loss_metric=="MLL":
-                norm_term,logdet = inv_log_det_cache.get_norm_term_logdet_term()
-                d_out = norm_term.numel()
-                term1 = norm_term.sum()
-                mll_const = d_out*self.n.sum()*np.log(2*np.pi)
-                term2 = d_out/torch.tensor(logdet.shape).prod()*logdet.sum()
-                loss = 1/2*(term1+term2+mll_const)
+            os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
+            if loss_metric=="MLL":
+                loss = inv_log_det_cache.mll_loss(self,update_prior_mean)
+            elif loss_metric=="GCV":
+                loss = inv_log_det_cache.gcv_loss(self,update_prior_mean)
             elif loss_metric=="CV":
-                coeffs = self.coeffs
-                del os.environ["FASTGP_FORCE_RECOMPILE"]
-                inv_diag = inv_log_det_cache.get_inv_diag()
-                os.environ["FASTGP_FORCE_RECOMPILE"] = "True"
-                term1 = term2 = torch.nan*torch.ones(1)
-                squared_sums = ((coeffs/inv_diag)**2*cv_weights).sum(-1,keepdim=True)
-                loss = squared_sums.sum().real
+                loss = inv_log_det_cache.cv_loss(self,cv_weights,update_prior_mean)
             else:
                 assert False, "loss_metric parsing implementation error"
-            if loss.item()<stop_crit_best_loss:
+            del os.environ["FASTGP_FORCE_RECOMPILE"]
+            pcstd = torch.sqrt(self.post_cubature_var()) if can_compute_pcstd else torch.inf*torch.ones(1,device=self.device)
+            if loss.item()<stop_crit_best_loss and (pcstd>0).all():
                 stop_crit_best_loss = loss.item()
-                best_params = OrderedDict([(pname,pval.clone()) for pname,pval in self.state_dict().items()])
+                best_params = (self.prior_mean.clone().detach(),OrderedDict([(pname,pval.clone()) for pname,pval in self.state_dict().items()]))
             if (stop_crit_save_loss-loss.item())>logtol:
                 stop_crit_iterations_without_improvement_loss = 0
                 stop_crit_save_loss = stop_crit_best_loss
             else:
                 stop_crit_iterations_without_improvement_loss += 1
-            break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations
+            break_condition = i==iterations or stop_crit_iterations_without_improvement_loss==stop_crit_wait_iterations or (pcstd<=0).any()
             if store_hists and (break_condition or i%store_hists==0):
                 hist_data["iteration"].append(i)
                 hist_data["loss"].append(loss.item())
                 hist_data["best_loss"].append(stop_crit_best_loss)
+                hist_data["prior_mean"].append(self.prior_mean.clone())
                 for pname in self.batch_param_names:
                     hist_data[pname].append(getattr(self,pname).data.detach().clone().cpu())
                 for pname in self.kernel.batch_param_names:
@@ -239,19 +249,21 @@ class AbstractGP(torch.nn.Module):
                 for pname in self.kernel.base_kernel.batch_param_names:
                     hist_data[pname].append(getattr(self.kernel.base_kernel,pname).data.detach().clone().cpu())
             if verbose and (i%verbose==0 or break_condition):
-                _s = "%16.2e | %-10.2e | %-10.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item(),term1.item() if term1.numel()==1 else torch.nan,term2.item() if term2.numel()==1 else torch.nan)
+                _s = "%16.2e | %-10.2e | %-10.2e"%(i,stop_crit_best_loss,loss.item())
                 print(" "*verbose_indent+_s)
             if break_condition: break
             # with torch.autograd.set_detect_anomaly(True):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-        self.load_state_dict(best_params)
-        del os.environ["FASTGP_FORCE_RECOMPILE"]
+        if best_params is not None:
+            self.prior_mean = best_params[0]
+            self.load_state_dict(best_params[1])
         if store_hists:
             hist_data["iteration"] = torch.tensor(hist_data["iteration"])
             hist_data["loss"] = torch.tensor(hist_data["loss"])
             hist_data["best_loss"] = torch.tensor(hist_data["best_loss"])
+            hist_data["prior_mean"] = torch.stack(hist_data["prior_mean"],dim=0)
             for pname in self.batch_param_names:
                 hist_data[pname] = torch.stack(hist_data[pname],dim=0)
             for pname in self.kernel.batch_param_names:
@@ -261,7 +273,9 @@ class AbstractGP(torch.nn.Module):
         return hist_data
     def _sample(self, seq, n_min, n_max):
         x = torch.from_numpy(seq(n_min=int(n_min),n_max=int(n_max))).to(torch.get_default_dtype()).to(self.device)
-        return x,x
+        return x
+    def _convert_xb_to_x(self, xb):
+        return xb
     def get_x_next(self, n:Union[int,torch.Tensor], task:Union[int,torch.Tensor]=None):
         """
         Get the next sampling locations. 
@@ -281,7 +295,7 @@ class AbstractGP(torch.nn.Module):
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert isinstance(n,torch.Tensor) and isinstance(task,torch.Tensor) and n.ndim==task.ndim==1 and len(n)==len(task)
         assert (n>=self.n[task]).all(), "maximum sequence index must be greater than the current number of samples"
-        x_next = [self.xxb_seqs[l][self.n[l]:n[i]][0] for i,l in enumerate(task)]
+        x_next = [self.xxb_seqs[l].getitem_x(self,slice(self.n[l],n[i])) for i,l in enumerate(task)]
         return x_next[0] if inttask else x_next
     def add_y_next(self, y_next:Union[torch.Tensor,List], task:Union[int,torch.Tensor]=None):
         """
@@ -298,8 +312,12 @@ class AbstractGP(torch.nn.Module):
         assert isinstance(y_next,list) and isinstance(task,torch.Tensor) and task.ndim==1 and len(y_next)==len(task)
         for i,l in enumerate(task):
             self._y[l] = torch.cat([self._y[l],y_next[i]],-1)
+        shape_batch = list(self._y[0].shape[:-1])
+        if (self.n==0).all() and len(shape_batch)>0:
+            self.prior_mean = torch.zeros(shape_batch+[self.num_tasks],device=self.device)
         self.n = torch.tensor([self._y[i].size(-1) for i in range(self.num_tasks)],dtype=int,device=self.device)
         self.m = torch.where(self.n==0,-1,torch.log2(self.n).round()).to(int) # round to avoid things like torch.log2(torch.tensor([2**3],dtype=torch.int64,device="cuda")).item() = 2.9999999999999996
+        self.n_cumsum = torch.hstack([torch.zeros(1,dtype=self.n.dtype,device=self.n.device),self.n.cumsum(0)[:-1]])
         for key in list(self.inv_log_det_cache_dict.keys()):
             if (torch.tensor(key)<self.n.cpu()).any():
                 del self.inv_log_det_cache_dict[key]
@@ -325,8 +343,15 @@ class AbstractGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        pmean = torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
+        if self.ptransform=="NONE":
+            kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+        elif self.ptransform=="BAKER":
+            kmat_left = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_right = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1)[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat = 1/2*(kmat_left+kmat_right)
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
+        pmean = self.prior_mean[...,task,None]+torch.einsum("...i,...i->...",kmat,coeffs[...,None,None,:])
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
         return pmean[...,0,:] if inttask else pmean
@@ -356,12 +381,36 @@ class AbstractGP(torch.nn.Module):
         if inttask: task = torch.tensor([task],dtype=int,device=self.device)
         if isinstance(task,list): task = torch.tensor(task,dtype=int,device=self.device)
         assert task.ndim==1 and (task>=0).all() and (task<self.num_tasks).all()
-        kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
-        kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
-        kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(kmat_perm)
-        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
-        diag = kmat_new-(t*kmat).sum(-1)
+        if self.ptransform=='NONE':
+            kmat_new = torch.cat([self.kernel(task[l0],task[l0],x,x,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm = torch.permute(kmat,[-3,-2]+[i for i in range(kmat.ndim-3)]+[-1])
+            t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat_perm)
+            t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+            diag = kmat_new-(t*kmat).sum(-1)
+        elif self.ptransform=='BAKER':
+            kmat_new_1 = torch.cat([self.kernel(task[l0],task[l0],x/2,x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_1 = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_1 = torch.permute(kmat_1,[-3,-2]+[i for i in range(kmat_1.ndim-3)]+[-1])
+            t_perm_1 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_1)
+            t_1 = torch.permute(t_perm_1,[2+i for i in range(t_perm_1.ndim-3)]+[0,1,-1])
+            diag_1 = kmat_new_1-(t_1*kmat_1).sum(-1)
+            kmat_new_2 = torch.cat([self.kernel(task[l0],task[l0],1-x/2,1-x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_2 = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_2 = torch.permute(kmat_2,[-3,-2]+[i for i in range(kmat_2.ndim-3)]+[-1])
+            t_perm_2 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_2)
+            t_2 = torch.permute(t_perm_2,[2+i for i in range(t_perm_2.ndim-3)]+[0,1,-1])
+            diag_2 = kmat_new_2-(t_2*kmat_2).sum(-1)
+            kmat_new_3 = torch.cat([self.kernel(task[l0],task[l0],x/2,1-x/2,*self.derivatives_cross[task[l0]][task[l0]],self.derivatives_coeffs_cross[task[l0]][task[l0]])[...,None,:] for l0 in range(len(task))],dim=-2)
+            kmat_3 = torch.cat([torch.cat([self.kernel(task[l0],l1,x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_p3 = torch.cat([torch.cat([self.kernel(task[l0],l1,1-x[:,None,:]/2,self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task[l0]][l1],self.derivatives_coeffs_cross[task[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task))],dim=-3)
+            kmat_perm_3 = torch.permute(kmat_p3,[-3,-2]+[i for i in range(kmat_p3.ndim-3)]+[-1])
+            t_perm_3 = inv_log_det_cache.gram_matrix_solve(self,kmat_perm_3)
+            t_3 = torch.permute(t_perm_3,[2+i for i in range(t_perm_3.ndim-3)]+[0,1,-1])
+            diag_3 = kmat_new_3-(t_3*kmat_3).sum(-1)
+            diag = 1/4*(diag_1+diag_2+2*diag_3)
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
         diag[diag<0] = 0 
         if eval:
             torch.set_grad_enabled(incoming_grad_enabled)
@@ -400,14 +449,29 @@ class AbstractGP(torch.nn.Module):
         if inttask1: task1 = torch.tensor([task1],dtype=int,device=self.device)
         if isinstance(task1,list): task1 = torch.tensor(task1,dtype=int,device=self.device)
         assert task1.ndim==1 and (task1>=0).all() and (task1<self.num_tasks).all()
-        equal = torch.equal(x0,x1) and torch.equal(task0,task1)
-        kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
-        kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
-        kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n=n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
-        kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
-        t_perm = inv_log_det_cache.gram_matrix_solve(kmat2_perm)
-        t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
-        kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+        if self.ptransform=="NONE":
+            equal = torch.equal(x0,x1) and torch.equal(task0,task1)
+            kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0[:,None,:],x1[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
+            kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+            kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
+            kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
+            t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
+            t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+            kmat = kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+        elif self.ptransform=="BAKER":
+            kmat = 0
+            for x0i,x1i in [[x0/2,x1/2],[x0/2,1-x1/2],[1-x0/2,x1/2],[1-x0/2,1-x1/2]]:
+                equal = torch.equal(x0i,x1i) and torch.equal(task0,task1)
+                kmat_new = torch.cat([torch.cat([self.kernel(task0[l0],task1[l1],x0i[:,None,:],x1i[None,:,:],*self.derivatives_cross[task0[l0]][task1[l1]],self.derivatives_coeffs_cross[task0[l0]][task1[l1]])[...,None,None,:,:] for l1 in range(len(task1))],dim=-3) for l0 in range(len(task0))],dim=-4)
+                kmat1 = torch.cat([torch.cat([self.kernel(task0[l0],l1,x0i[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task0[l0]][l1],self.derivatives_coeffs_cross[task0[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task0))],dim=-3)
+                kmat2 = kmat1 if equal else torch.cat([torch.cat([self.kernel(task1[l0],l1,x1i[:,None,:],self.get_xb(l1,n[l1])[None,:,:],*self.derivatives_cross[task1[l0]][l1],self.derivatives_coeffs_cross[task1[l0]][l1]) for l1 in range(self.num_tasks)],dim=-1)[...,None,:,:] for l0 in range(len(task1))],dim=-3)
+                kmat2_perm = torch.permute(kmat2,[-3,-2]+[i for i in range(kmat2.ndim-3)]+[-1])
+                t_perm = inv_log_det_cache.gram_matrix_solve(self,kmat2_perm)
+                t = torch.permute(t_perm,[2+i for i in range(t_perm.ndim-3)]+[0,1,-1])
+                kmat += kmat_new-(kmat1[...,:,None,:,None,:]*t[...,None,:,None,:,:]).sum(-1)
+            kmat = kmat/4
+        else:
+            raise Exception("invalid ptransform = %s"%self.ptransform)
         if equal:
             tmesh,nmesh = torch.meshgrid(torch.arange(kmat.size(0),device=self.device),torch.arange(x0.size(0),device=x0.device),indexing="ij")            
             tidx,nidx = tmesh.ravel(),nmesh.ravel()
@@ -576,13 +640,18 @@ class AbstractGP(torch.nn.Module):
         """
         Noise parameter.
         """
-        return self.tf_noise(self.raw_noise)
+        return self.tfs_noise[1](self.raw_noise)
     @property 
     def coeffs(self):
         r"""
         Coefficients $\mathsf{K}^{-1} \boldsymbol{y}$.
         """
-        return self.coeffs_cache()
+        if not hasattr(self,"_coeffs") or (self.n_coeffs!=self.n).any() or not _frozen_equal(self,self.state_dict_coeffs) or _force_recompile(self):
+            inv_log_det_cache = self.get_inv_log_det_cache()
+            self._coeffs = inv_log_det_cache.gram_matrix_solve(self,torch.cat([self._y[i]-self.prior_mean[...,i,None] for i in range(self.num_tasks)],dim=-1))
+            self.state_dict_coeffs = _freeze(self)
+            self.n_coeffs = self.n.clone()
+        return self._coeffs  
     @property
     def x(self):
         """
@@ -604,25 +673,12 @@ class AbstractGP(torch.nn.Module):
         assert 0<=task<self.num_tasks
         if n is None: n = self.n[task]
         assert n>=0
-        x,xb = self.xxb_seqs[task][:n]
+        x = self.xxb_seqs[task].getitem_x(self,slice(0,n))
         return x
     def get_xb(self, task, n=None):
         assert 0<=task<self.num_tasks
         if n is None: n = self.n[task]
         assert n>=0
-        x,xb = self.xxb_seqs[task][:n]
+        xb = self.xxb_seqs[task].getitem_xb(self,slice(0,n))
         return xb
-    def kernel_abstracted(self, x:torch.Tensor, z:torch.Tensor, beta0:torch.Tensor=None, beta1:torch.Tensor=None, c0:torch.Tensor=None, c1:torch.Tensor=None):
-        assert isinstance(x,torch.Tensor) and x.size(-1)==self.d
-        assert isinstance(z,torch.Tensor) and z.size(-1)==self.d
-        if beta0 is None: beta0 = torch.zeros((1,self.d),dtype=int,device=self.device)
-        if beta0.shape==(len(beta0),): beta0 = beta0[None,:]
-        assert isinstance(beta0,torch.Tensor) and beta0.ndim==2 and beta0.size(1)==self.d 
-        if beta1 is None: beta1 = torch.zeros((1,self.d),dtype=int,device=self.device)
-        if beta1.shape==(len(beta1),): beta1 = beta1[None,:]
-        assert isinstance(beta1,torch.Tensor) and beta1.ndim==2 and beta1.size(1)==self.d 
-        if c0 is None: c0 = torch.ones(len(beta0),device=self.device)
-        assert isinstance(c0,torch.Tensor) and c0.shape==(beta0.size(0),)
-        if c1 is None: c1 = torch.ones(len(beta1),device=self.device)
-        assert isinstance(c1,torch.Tensor) and c1.shape==(beta1.size(0),)
-        return self._kernel(x,z,beta0,beta1,c0,c1)
+    
