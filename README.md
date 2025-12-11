@@ -1,12 +1,7 @@
-# `FastGPs`: Fast Gaussian Process Regression in Python
+# `fastgps`: Fast Gaussian Process Regression in Python
 
 [![Docs](https://github.com/alegresor/fastgps/actions/workflows/docs.yml/badge.svg?branch=main)](https://alegresor.github.io/fastgps/)
 [![Tests](https://github.com/alegresor/fastgps/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/alegresor/fastgps/actions/workflows/tests.yml)
-
-Gaussian process regression (GPR) on $n$ data points typically costs $\mathcal{O}(n^3)$ computations and $\mathcal{O}(n^2)$ storage. Fast GPR only costs $\mathcal{O}(n \log n)$ computations and $\mathcal{O}(n)$ storage by forcing nice structure into the $n \times n$ Gram matrix of pairwise kernel evaluations. Fast GPR requires
-
-1. control over the design of experiments, i.e., sampling at fixed locations, and
-2. Using special kernel forms that are practically performant but generally uncommon, e.g., one *cannot* use common kernels such as the Squared Exponential, Matern, or Rational Quadratic.
 
 ## Installation
 
@@ -14,39 +9,71 @@ Gaussian process regression (GPR) on $n$ data points typically costs $\mathcal{O
 pip install fastgps
 ```
 
-## Resources
+## Overview
 
-The [FastGPs documentation](https://alegresor.github.io/fastgps/) contains a detailed **package reference** documenting classes including thorough doctests. A number of **example notebooks** are also rendered into the documentation from `fastgps/docs/examples/`. We recommend reading [Aleksei Sorokin's slides on Fast GPR](https://github.com/alegresor/alegresor.github.io/blob/main/presentations/2025_FastGPs_MCM.pdf) which he presented at [MCM 2025 Chicago](https://fjhickernell.github.io/mcm2025/).
+Gaussian process (GP) regression on $n$ data points typically require $\mathcal{O}(n^3)$ computations and $\mathcal{O}(n^2)$ storage. Fast GPs only require $\mathcal{O}(n \log n)$ computations and $\mathcal{O}(n)$ storage by forcing nice structure into the $n \times n$ Gram matrix of pairwise kernel evaluations. Fast GPs require
 
-## Fast GPR Methods
+- Control over the design of experiments, i.e., sampling at fixed locations which we will choose to be **quasi-random (low-discrepancy) sequences**, and
+- Using special kernel forms that are practically performant but generally uncommon, e.g., one *cannot* use common kernels such as the Squared Exponential, Matern, or Rational Quadratic. We will use **(digitally)-shift invariant kernels**.
 
-We currently support two flavors of fast GPR:
+## Scope
 
-1. Pairing integration lattice point sets with shift-invariant (SI) kernels which creates circulant Gram matrices that are diagonalizable by Fast Fourier Transforms (FFTs). SI kernels are periodic and arbitrarily smooth.
-2. Pairing digital nets (e.g. Sobol' point sets) with digitally-shift-invariant (DSI) kernels which creates Gram matrices diagonalizable by Fast Walsh Hadamard Transforms (FWHTs). DSI kernels are discontinuous, yet versions exist for which the corresponding Reproducing Kernel Hilbert Space (RKHSs) contains arbitrarily smooth functions.
+`fastgps` currently support two flavors:
 
-## Software Features
+1. Pairing **rank-1 integration lattices** with **shift-invariant (SI) kernels** creates circulant Gram matrices that are diagonalizable by Fast Fourier Transforms (**FFTs**). SI kernels are periodic and arbitrarily smooth.
+2. Pairing **digital sequences** (e.g. Sobol' sequences) with **digitally-shift-invariant (DSI) kernels** creates Gram matrices diagonalizable by Fast Walsh-Hadamard Transforms (**FWHTs**). DSI kernels are discontinuous, yet versions exist for which the corresponding Reproducing Kernel Hilbert Space (RKHSs) contains arbitrarily smooth functions.
 
-A reference standard GP implementation is available alongside the fast GPR implementations. All GPR methods support:
+## Features
 
-- **GPU computations** as `FastGPs` is built on the `PyTorch` stack.
+A reference standard GP implementation is available alongside the fast GP implementations. All GP methods support:
+
+- **GPU computations** as `fastgps` is built on the `PyTorch` stack.
 - **Batching** of both outputs (for functions with tensor outputs) and parameters (with flexibly shareable parameters among batched outputs).
-- **Multi-Task GPs** with product kernels and generalized fast multi-task GPR.
+- **Multi-Task GPs** with product kernels and generalized fast multi-task GPs.
 - **Derivative Information** of arbitrarily high order.
 - **Bayesian Cubature** for approximating integrals or expectations.
 - **Flexible kernel parameterizations** from the [`QMCPy` package](https://qmcsoftware.github.io/QMCSoftware/).
 - **Efficient variance projections** for determining if and where to sample next.
 
-## References
+## Resources
 
-This package is based off of the following publications
+The [`fastgps` documentation](https://alegresor.github.io/fastgps/) contains a detailed **package reference** documenting classes including thorough doctests. A number of **example notebooks** are also rendered into the documentation from `fastgps/docs/examples/`. We recommend reading [Aleksei Sorokin's slides on Fast GPs](https://github.com/alegresor/alegresor.github.io/blob/main/presentations/2025_FastGPs_MCM.pdf) which he presented at [MCM 2025 Chicago](https://fjhickernell.github.io/mcm2025/).
 
-1. Sorokin, Aleksei, Pieterjan Robbe, and Fred J. Hickernell. "Fast Gaussian process regression for high dimensional functions with derivative information." First International Conference on Probabilistic Numerics. PMLR, 2025.
+## Citation
 
-2. Sorokin, Aleksei G., et al. "Fast Bayesian Multilevel Quasi-Monte Carlo." arXiv preprint arXiv:2510.24604 (2025).
+If you find the `fastgps` package helpful in your work, please consider citing the following papers
 
-3. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using lattice sampling." Statistics and Computing 29.6 (2019): 1215-1229.
+```bibtex
+@phdthesis{sorokin.thesis,
+  title               = {Algorithms and scientific software for quasi-{M}onte {C}arlo, fast {G}aussian process regression, and scientific machine learning},
+  author              = {Aleksei G. Sorokin},
+  year                = {2025},
+  school              = {Illinois Institute of Technology},
+  journal             = {ArXiv preprint},
+  volume              = {abs/2511.21915},
+  url                 = {https://arxiv.org/abs/2511.21915},
+}
 
-4. Jagadeeswaran, Rathinavel, and Fred J. Hickernell. "Fast automatic Bayesian cubature using Sobol’ sampling." Advances in Modeling and Simulation: Festschrift for Pierre L'Ecuyer. Cham: Springer International Publishing, 2022. 301-318.
+@inproceedings{sorokin.fastgps_probnum25,
+  title               = {Fast {G}aussian process regression for high dimensional functions with derivative information},
+  author              = {Sorokin, Aleksei G. and Robbe, Pieterjan and Hickernell, Fred J.},
+  year                = {2025},
+  booktitle           = {Proceedings of the First International Conference on Probabilistic Numerics},
+  publisher           = {{PMLR}},
+  series              = {Proceedings of Machine Learning Research},
+  volume              = {271},
+  pages               = {35--49},
+  url                 = {https://proceedings.mlr.press/v271/sorokin25a.html},
+  editor              = {Kanagawa, Motonobu and Cockayne, Jon and Gessner, Alexandra and Hennig, Philipp},
+  pdf                 = {https://raw.githubusercontent.com/mlresearch/v271/main/assets/sorokin25a/sorokin25a.pdf},
+}
 
-5. Rathinavel, Jagadeeswaran. Fast automatic Bayesian cubature using matching kernels and designs. Illinois Institute of Technology, 2019.
+@article{sorokin.FastBayesianMLQMC,
+  title               = {Fast {B}ayesian multilevel quasi-{M}onte {C}arlo},
+  author              = {Aleksei G. Sorokin and Pieterjan Robbe and Gianluca  Geraci and Michael S. Eldred and Fred J. Hickernell},
+  year                = {2025},
+  journal             = {ArXiv preprint},
+  volume              = {abs/2510.24604},
+  url                 = {https://arxiv.org/abs/2510.24604},
+}
+```

@@ -1,4 +1,4 @@
-site_name: "FastGPs"
+site_name: "fastgps"
 nav:
   - Home: index.md
   - Package Reference: api.md
@@ -30,9 +30,9 @@ nav:
     - ProbNum25: examples/papers/probnum25/probnum25.ipynb
     - FMTGPs: examples/papers/fmtgps/fmtgps.ipynb
   - Miscellaneous: 
-    - Periodization: docs/examples/misc/periodization.ipynb
-    - Periodization: docs/examples/misc/random_fourier_features.ipynb
-    - KISS Net: docs/examples/misc/kiss_gp_dnets.ipynb
+    - Periodization: examples/misc/periodization.ipynb
+    - Random Fourier features: examples/misc/random_fourier_features.ipynb
+    - KISS Net: examples/misc/kiss_gp_dnets.ipynb
 
 
 plugins:
