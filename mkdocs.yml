@@ -1,4 +1,4 @@
-site_name: "FastGPs"
+site_name: "fastgps"
 nav:
   - Home: index.md
   - Package Reference: api.md

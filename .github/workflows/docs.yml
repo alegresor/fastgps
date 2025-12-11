@@ -25,6 +25,7 @@ jobs:
           path: .cache 
           restore-keys: |
             mkdocs-material-
+      - run: pip install -e .
       - run: pip install mkdocs-material 
       - run: pip install mkdocstrings
       - run: pip install mkdocstrings-python
