@@ -2,6 +2,8 @@
 
 [![Docs](https://github.com/alegresor/fastgps/actions/workflows/docs.yml/badge.svg?branch=main)](https://alegresor.github.io/fastgps/)
 [![Tests](https://github.com/alegresor/fastgps/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/alegresor/fastgps/actions/workflows/tests.yml)
+[![GitHub stars](https://img.shields.io/github/stars/alegresor/fastgps?style=social)](https://github.com/alegresor/fastgps)
+
 
 ## Installation
 
