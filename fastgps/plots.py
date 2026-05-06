@@ -22,7 +22,7 @@ def plot_fastgps_fit_data(
         savepath (str): path where the plot is saved; if `None`, then the plot is not saved.  
         dict_log_scale (dict): dictionary where `dict_log_scale[key]` is a `bool` indicating 
             whether or not to log scale the axis corresponding to this key. 
-            If `None`, the it will be log scaled whenever the data is all positive
+            If `None`, then it will be log scaled whenever the data is all positive
         fontsize (str): font size 
         linewidth (float): line width
     
