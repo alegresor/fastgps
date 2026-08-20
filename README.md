@@ -46,17 +46,15 @@ The [`fastgps` documentation](https://alegresor.github.io/fastgps/) contains a d
 If you find the `fastgps` package helpful in your work, please consider citing the following papers
 
 ```bibtex
-@phdthesis{sorokin.thesis,
+@phdthesis{sorokin.2025.thesis,
   title               = {Algorithms and scientific software for quasi-{M}onte {C}arlo, fast {G}aussian process regression, and scientific machine learning},
   author              = {Aleksei G. Sorokin},
   year                = {2025},
+  doi                 = {10.48550/arXiv.2511.21915},
   school              = {Illinois Institute of Technology},
-  journal             = {ArXiv preprint},
-  volume              = {abs/2511.21915},
-  url                 = {https://arxiv.org/abs/2511.21915},
 }
 
-@inproceedings{sorokin.fastgps_probnum25,
+@inproceedings{sorokin.2025.fast_GPs_derivatives,
   title               = {Fast {G}aussian process regression for high dimensional functions with derivative information},
   author              = {Sorokin, Aleksei G. and Robbe, Pieterjan and Hickernell, Fred J.},
   year                = {2025},
@@ -70,12 +68,17 @@ If you find the `fastgps` package helpful in your work, please consider citing t
   pdf                 = {https://raw.githubusercontent.com/mlresearch/v271/main/assets/sorokin25a/sorokin25a.pdf},
 }
 
-@article{sorokin.FastBayesianMLQMC,
+@article{sorokin.2025.fast_Bayesian_MLQMC,
   title               = {Fast {B}ayesian multilevel quasi-{M}onte {C}arlo},
-  author              = {Aleksei G. Sorokin and Pieterjan Robbe and Gianluca  Geraci and Michael S. Eldred and Fred J. Hickernell},
+  author              = {Aleksei G. Sorokin and Pieterjan Robbe and Gianluca Geraci and Michael S. Eldred and Fred J. Hickernell},
   year                = {2025},
-  journal             = {ArXiv preprint},
-  volume              = {abs/2510.24604},
-  url                 = {https://arxiv.org/abs/2510.24604},
+  doi                 = {10.48550/arXiv.2510.24604},
+}
+
+@misc{sorokin.2026.fast_multitask_GPs,
+  title               = {Fast multitask {G}aussian process regression},
+  author              = {Aleksei G. Sorokin and Pieterjan Robbe and Fred J. Hickernell},
+  year                = {2026},
+  doi                 = {10.48550/arXiv.2603.16014},
 }
 ```
